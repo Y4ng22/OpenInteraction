@@ -65,11 +65,13 @@ class ContextPackager:
         max_context_tokens: int = 4096,
         include_audio_features: bool = True,
         include_vision_features: bool = True,
+        micro_turn_ms: int = 200,
     ):
         self.max_conversation_turns = max_conversation_turns
         self.max_context_tokens = max_context_tokens
         self.include_audio_features = include_audio_features
         self.include_vision_features = include_vision_features
+        self.micro_turn_ms = micro_turn_ms
         self._package_counter: int = 0
 
     def build_package(
@@ -176,7 +178,7 @@ class ContextPackager:
             "silence_duration_ms": silence_duration_ms,
             "silence_duration_s": silence_duration_ms / 1000,
             "num_recent_cells": len(cells),
-            "duration_ms": len(cells) * 200,  # 200ms per cell
+            "duration_ms": len(cells) * self.micro_turn_ms,
             "user_speaking_ratio": user_speaking_cells / max(len(cells), 1),
             "model_speaking_ratio": model_speaking_cells / max(len(cells), 1),
             "first_cell_timestamp_ms": cells[0].timestamp_ms if cells else 0,

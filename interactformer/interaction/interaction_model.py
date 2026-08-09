@@ -135,10 +135,28 @@ class InteractionModel(nn.Module):
         B = 1  # Streaming processes one session at a time
 
         # === Step 1: Encode multimodal input ===
+        # text_tokens: accept LongTensor token IDs or str (convert via tokenizer)
+        text_embeddings = None
+        if text_tokens is not None:
+            if isinstance(text_tokens, str):
+                # Convert raw string to token IDs via thinker's embedding table
+                # Placeholder tokenizer: use basic whitespace + truncation
+                # Real tokenizer should be wired in via Orchestrator
+                num_ids = min(len(text_tokens.split()), 128)
+                token_ids = torch.zeros((B, num_ids), dtype=torch.long, device=device)
+                text_embeddings = self.thinker.token_embedding(token_ids)
+            elif isinstance(text_tokens, torch.Tensor):
+                if text_tokens.dtype in (torch.long, torch.int32, torch.int64):
+                    text_embeddings = self.thinker.token_embedding(
+                        text_tokens.to(device)
+                    )
+                else:
+                    text_embeddings = text_tokens.to(device)
+
         fused = self.encoder(
             audio=audio_chunk.to(device) if audio_chunk is not None else None,
             images=image.to(device) if image is not None else None,
-            text_tokens=text_tokens.to(device) if text_tokens is not None else None,
+            text_embeddings=text_embeddings,
         )  # [B, T_enc, d_model]
 
         # === Step 2: Create temporal grid cell ===
@@ -147,9 +165,9 @@ class InteractionModel(nn.Module):
                 self.temporal_grid._current_cell_id * self.micro_turn_ms
             )
 
-        # Detect user speech from audio energy (simplified; real model
-        # learns this implicitly through temporal patterns)
-        is_speaking = self._detect_speech_activity(audio_chunk)
+        # Estimate speech activity (energy-threshold heuristic during
+        # development; target is learned speech-state from TemporalGrid)
+        is_speaking = self._estimate_speech_activity(audio_chunk)
 
         cell = self.temporal_grid.create_cell(
             timestamp_ms=timestamp_ms,
@@ -165,24 +183,44 @@ class InteractionModel(nn.Module):
             self._current_silence_ms = 0.0
 
         # === Step 3: Thinker processing ===
-        # Get recent cells for context
-        recent_cells = self.temporal_grid.get_recent_cells(25)  # 5 seconds
+        # Get recent cells for context (excluding the new cell created above
+        # since its hidden_state is not yet computed)
+        recent_cells = self.temporal_grid.get_recent_cells(24)  # ~5 seconds excl. current
         recent_hidden = [
             c.hidden_state for c in recent_cells
             if c.hidden_state is not None
         ]
 
-        # Build attention mask from temporal grid
-        num_cells = len(recent_cells)
+        # Stack recent hidden states and prepend current input
+        # shape: [B, T_past+1, d_model] — current turn is always the last position
+        if recent_hidden:
+            past_hidden = torch.stack(recent_hidden, dim=1)  # [B, T_past, d_model]
+            context_hidden = torch.cat([past_hidden, fused[:, -1:, :]], dim=1)
+        else:
+            context_hidden = fused[:, -1:, :]  # [B, 1, d_model]
+
+        # Apply temporal position encoding from TemporalGrid
+        num_seq_cells = context_hidden.shape[1]
+        cell_ids = torch.arange(
+            cell.cell_id - num_seq_cells + 1, cell.cell_id + 1,
+            device=device
+        ).unsqueeze(0)  # [1, num_seq_cells]
+        silence_tensor = torch.full(
+            (1, num_seq_cells), self._current_silence_ms,
+            device=device, dtype=torch.float32
+        )
+        context_hidden = self.temporal_grid.forward(
+            cell_ids, context_hidden, silence_tensor
+        )
+
+        # Build attention mask matching the actual sequence length
         attn_mask = self.temporal_grid.build_attention_mask(
-            num_cells, include_future=False
+            num_seq_cells, include_future=False
         ).to(device)
 
-        # Stack recent hidden states for batch processing
-        if recent_hidden:
-            context_hidden = torch.stack(recent_hidden, dim=1)  # [B, T, d_model]
-        else:
-            context_hidden = fused  # Just the current input
+        # Ensure mask shape compatibility: [T, T] → broadcastable to [B, H, T, T]
+        if attn_mask.dim() == 2:
+            attn_mask = attn_mask.unsqueeze(0).unsqueeze(0)  # [1, 1, T, T]
 
         # Run Thinker
         thinker_output = self.thinker(
@@ -217,12 +255,16 @@ class InteractionModel(nn.Module):
                 is_interrupted=False,
             )
             cell.is_model_speaking = True
+            cell.output_speech = speech_output  # Write back for context
         elif should_interrupt:
             self.talker.interrupt()
             cell.is_model_speaking = False
 
         # === Step 7: Generate text output ===
         text_logits = thinker_output["logits"][:, -1, :]  # Last token
+        # Write cell output for context packaging
+        predicted_tokens = text_logits.argmax(dim=-1).tolist()  # [B]
+        cell.output_text = predicted_tokens
 
         # === Step 8: Check if delegation is needed ===
         delegation_score = thinker_output["delegation_score"].item()
@@ -243,20 +285,22 @@ class InteractionModel(nn.Module):
             ),
         )
 
-    def _detect_speech_activity(
+    def _estimate_speech_activity(
         self, audio_chunk: Optional[torch.Tensor]
     ) -> bool:
-        """Detect if audio chunk contains speech.
+        """Estimate whether the audio chunk contains speech.
 
-        Simplified energy-based detection. The real model learns this
-        implicitly — we don't ship an external VAD. This is just for
-        the demo/placeholder implementation.
+        Currently uses energy-threshold heuristic. Target architecture:
+        replace with learned speech-state estimation from the TemporalGrid
+        (see temporal_grid.py's speech_gate and interruption_detector).
+
+        TODO: implement SpeechActivityEstimator abstract class for
+        pluggable heuristic/learned backends.
         """
         if audio_chunk is None:
             return False
-
         energy = (audio_chunk ** 2).mean().item()
-        return energy > 1e-4  # Simple energy threshold
+        return energy > 1e-4
 
     def _build_delegation_context(
         self, recent_cells: list[GridCell]

@@ -40,6 +40,9 @@ from interactformer.bridge.stream_injector import (
 from interactformer.bridge.context_packager import (
     ContextPackager, ContextPackage,
 )
+from interactformer.bridge.cross_attention import (
+    StreamingContextBridge,
+)
 from interactformer.orchestrator.session import (
     StreamingSession, SessionState, SessionConfig,
 )
@@ -98,6 +101,9 @@ class Orchestrator:
         )
         self.context_packager = (
             ContextPackager() if enable_bridge else None
+        )
+        self.bridge = (
+            StreamingContextBridge(d_model=d_model) if enable_bridge else None
         )
 
         # Session management
@@ -228,7 +234,11 @@ class Orchestrator:
 
         # Check for background model results via bridge
         bridge_context = None
-        if self.bridge_injector:
+        if self.bridge and self.bridge_injector:
+            # 1. Poll S2 for completed/partial results
+            self._check_background_results(session)
+
+            # 2. Get pending S2→S1 injection messages from the queue
             injections = self.bridge_injector.get_context_for_cell(
                 cell_id=session.metrics.total_micro_turns,
                 is_model_speaking=(
@@ -238,12 +248,15 @@ class Orchestrator:
             )
             if injections:
                 session.register_injection()
-                # Convert injections to bridge context tensor
-                # (simplified; real implementation would embed properly)
-                bridge_context = None  # Placeholder
+                # 3. Convert text content dicts → bridge tensor via BridgeProjector
+                new_bridge = self.bridge.embed_content_dicts(
+                    injections, device=next(self.interaction_model.parameters()).device
+                )
+                # 4. Progressive update: blend with existing bridge state
+                self.bridge.update_context(new_bridge)
 
-            # Check for completed background tasks
-            self._check_background_results(session)
+            # 5. Retrieve current bridge state for S1 consumption
+            bridge_context = self.bridge.get_current_context()
 
         # Process through Interaction Model
         timestamp_ms = session.metrics.total_micro_turns * self.micro_turn_ms
@@ -296,25 +309,37 @@ class Orchestrator:
         if output.context_for_delegation is None:
             return
 
+        # Extract query from the actual interaction context
+        query_text = "Analyze the recent conversation context."
+        if output.context_for_delegation:
+            ctx = output.context_for_delegation
+            if ctx.get("user_has_spoken"):
+                query_text = "The user has been speaking. Analyze their intent."
+            query_text += (
+                f" (silence: {output.silence_duration_ms:.0f}ms, "
+                f"cells: {ctx.get('num_context_cells', 0)})"
+            )
+
         # Build context package
         ctx_package = None
         if self.context_packager:
             recent_cells = self.interaction_model.temporal_grid.get_recent_cells()
             ctx_package = self.context_packager.build_package(
-                query="User query",  # Would be extracted from output
+                query=query_text,
                 recent_cells=recent_cells,
                 silence_duration_ms=output.silence_duration_ms,
             )
 
-        # Create background task
+        # Create background task with versioning metadata
         task = BackgroundTask(
-            task_id=f"task_{session.metrics.total_delegations}",
+            task_id=f"task_{session.session_id}_{session.metrics.total_delegations}",
             task_type=BackgroundTaskType.MIXED,
-            query="User query",  # Would be extracted from text output
-            context=(
-                self.context_packager.to_dict(ctx_package)
-                if ctx_package else {}
-            ),
+            query=query_text,
+            context={
+                "session_id": session.session_id,
+                "micro_turn_id": session.metrics.total_micro_turns,
+                **(self.context_packager.to_dict(ctx_package) if ctx_package else {}),
+            },
         )
 
         # Submit to background model

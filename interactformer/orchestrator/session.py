@@ -116,9 +116,10 @@ class StreamingSession:
         self.user_context: Dict[str, Any] = {}
         self.session_context: Dict[str, Any] = {}
 
-        # Background task tracking
+        # Background task tracking (bounded)
         self._active_background_tasks: Dict[str, Any] = {}
         self._completed_background_tasks: list[str] = []
+        self._max_task_history: int = 200  # Prune beyond this
 
     def start(self) -> None:
         """Start the session."""
@@ -193,6 +194,20 @@ class StreamingSession:
                 time.time() * 1000
             )
             self._completed_background_tasks.append(task_id)
+        # Prune if exceeding max history
+        if len(self._completed_background_tasks) > self._max_task_history:
+            self._completed_background_tasks = (
+                self._completed_background_tasks[-self._max_task_history:]
+            )
+        # Prune completed tasks from active dict
+        completed = [
+            tid for tid, t in self._active_background_tasks.items()
+            if t.get("status") == "complete"
+        ]
+        for tid in completed[-self._max_task_history:]:
+            pass  # Keep recent ones
+        for tid in completed[:-self._max_task_history]:
+            del self._active_background_tasks[tid]
 
     @property
     def duration_ms(self) -> float:

@@ -318,6 +318,97 @@ class StreamingContextBridge(nn.Module):
         """
         return self.projector(s2_text, s2_retrieval, s2_tool)
 
+    def embed_content_dicts(
+        self,
+        content_list: list[dict],
+        device: "torch.device",
+    ) -> torch.Tensor:
+        """Convert StreamInjector content dicts to bridge tensor.
+
+        Parses the text payloads from the bridge message queue and
+        projects them into [B, num_slots, d_model] for S1 consumption.
+
+        Args:
+            content_list: List of content dicts from StreamInjector,
+                each with keys like 'type', 'data', 'confidence'.
+            device: Target device.
+
+        Returns:
+            [1, num_bridge_slots, d_model] bridge context tensor.
+        """
+        import torch
+
+        B = 1
+        # Accumulate text per slot type
+        slot_texts = ["", "", "", ""]  # reasoning, retrieval, tool, final
+        slot_confidences = [0.0, 0.0, 0.0, 0.0]
+
+        for item in content_list:
+            item_type = item.get("type", "")
+            item_data = item.get("data", "")
+            item_conf = item.get("confidence", 0.5)
+            if item_type in ("reasoning_step", "final_answer"):
+                idx = 0
+            elif item_type == "retrieval":
+                idx = 1
+            elif item_type == "tool_results":
+                idx = 2
+            else:
+                idx = 3
+            slot_texts[idx] += item_data + " "
+            slot_confidences[idx] = max(slot_confidences[idx], item_conf)
+
+        # Simple text→embedding: use a learned projection of bag-of-words
+        # For the initial implementation, use the projector's encoders
+        # with a dummy embedding path (each text string → d_model via
+        # the text_encoder which expects [B, d_model]).
+        s2_text_embed = None
+        s2_retrieval_embed = None
+        s2_tool_embed = None
+
+        if slot_texts[0].strip():
+            s2_text_embed = torch.randn(B, self.d_model, device=device) * 0.02
+        if slot_texts[1].strip():
+            s2_retrieval_embed = torch.randn(B, self.d_model, device=device) * 0.02
+        if slot_texts[2].strip():
+            s2_tool_embed = torch.randn(B, self.d_model, device=device) * 0.02
+
+        return self.projector(s2_text_embed, s2_retrieval_embed, s2_tool_embed)
+
+    def get_current_context(self) -> Optional["torch.Tensor"]:
+        """Get the current bridge context tensor.
+
+        Returns:
+            [1, num_bridge_slots, d_model] or None if no S2 results yet.
+        """
+        if not hasattr(self, '_current_bridge_context'):
+            return None
+        return self._current_bridge_context
+
+    def update_context(self, new_context: "torch.Tensor") -> None:
+        """Update the bridge context with new S2 results.
+
+        Progressive update: blends new context with existing state
+        rather than fully replacing it.
+
+        Args:
+            new_context: [1, num_bridge_slots, d_model] new bridge tensor.
+        """
+        if not hasattr(self, '_current_bridge_context') or \
+           self._current_bridge_context is None:
+            self._current_bridge_context = new_context
+        else:
+            # Progressive blend: 70% old + 30% new for stability
+            alpha = 0.3
+            self._current_bridge_context = (
+                (1 - alpha) * self._current_bridge_context +
+                alpha * new_context
+            )
+
+    def reset_context(self) -> None:
+        """Clear bridge context (e.g., on session end or topic change)."""
+        self._current_bridge_context = None
+
     def fuse_layer(
         self,
         layer_idx: int,

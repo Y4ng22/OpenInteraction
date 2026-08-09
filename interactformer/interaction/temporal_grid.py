@@ -306,7 +306,8 @@ class TemporalGrid(nn.Module):
         combined = torch.cat([current_hidden, previous_hidden], dim=-1)
         logits = self.interruption_detector(combined)
         probs = torch.softmax(logits, dim=-1)
-        return probs[1] > 0.5, probs[1].item()
+        # probs: [B, 2]; index with [0, 1] not [1] for batch safety
+        return probs[0, 1] > 0.5, probs[0, 1].item()
 
     def build_attention_mask(
         self,
