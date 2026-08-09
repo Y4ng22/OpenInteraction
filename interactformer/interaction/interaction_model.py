@@ -135,27 +135,15 @@ class InteractionModel(nn.Module):
         B = 1  # Streaming processes one session at a time
 
         # === Step 1: Encode multimodal input ===
-        # text_tokens: accept LongTensor token IDs or str (convert via tokenizer)
         text_embeddings = None
         if text_tokens is not None:
             if isinstance(text_tokens, str):
-                # Use installed tokenizer if available, else fall back to
-                # whitespace-split and real token embedding lookup
-                tokenizer = getattr(self, '_tokenizer', None)
-                if tokenizer is not None:
-                    tokens = tokenizer(
-                        text_tokens, return_tensors="pt", truncation=True,
-                        max_length=128,
-                    )
-                    token_ids = tokens["input_ids"].to(device)
-                else:
-                    # Fallback: simple whitespace tokenization + vocabulary
-                    # mapping using a basic ascii-based hash
-                    words = text_tokens.lower().split()[:128]
-                    token_ids = torch.tensor(
-                        [[hash(w) % self.thinker.vocab_size for w in words]],
-                        dtype=torch.long, device=device,
-                    )
+                tokenizer = self._tokenizer
+                tokens = tokenizer(
+                    text_tokens, return_tensors="pt",
+                    truncation=True, max_length=128,
+                )
+                token_ids = tokens["input_ids"].to(device)
                 text_embeddings = self.thinker.token_embedding(token_ids)
             elif isinstance(text_tokens, torch.Tensor):
                 if text_tokens.dtype in (torch.long, torch.int32, torch.int64):

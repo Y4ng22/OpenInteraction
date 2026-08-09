@@ -129,26 +129,32 @@ class Orchestrator:
         if self._initialized:
             return
 
-        # Wire tokenizer into bridge for semantic S2→S1 encoding.
-        # Uses local_files_only=True first to avoid HF network hang.
+        # Load tokenizer from HuggingFace (cached locally after first download).
+        # Tokenizer files are small (~3MB); 30s timeout prevents hang.
+        tokenizer = None
+        try:
+            from transformers import AutoTokenizer
+            import os
+            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
+            tokenizer = AutoTokenizer.from_pretrained(
+                "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+                trust_remote_code=True,
+            )
+            print("[Orchestrator] HuggingFace tokenizer loaded.")
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to load HuggingFace tokenizer. "
+                "Ensure network access to huggingface.co (or set HF_ENDPOINT "
+                "for a mirror). Error: " + str(e)
+            )
+
+        # Wire into bridge and interaction model
         if self.bridge:
-            try:
-                from transformers import AutoTokenizer
-                tokenizer = AutoTokenizer.from_pretrained(
-                    "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-                    trust_remote_code=True,
-                    local_files_only=True,  # Don't hang on network
-                )
-                self.bridge.set_tokenizer(
-                    tokenizer,
-                    self.interaction_model.thinker.token_embedding,
-                )
-                self.interaction_model._tokenizer = tokenizer
-                print("[Orchestrator] Real tokenizer loaded for semantic bridge.")
-            except Exception:
-                print("[Orchestrator] No local tokenizer found. "
-                      "Using deterministic hash fallback for bridge encoding. "
-                      "(Set HF_ENDPOINT and download tokenizer for semantic encoding.)")
+            self.bridge.set_tokenizer(
+                tokenizer,
+                self.interaction_model.thinker.token_embedding,
+            )
+        self.interaction_model._tokenizer = tokenizer
 
         # Start background model
         if self.background_model:

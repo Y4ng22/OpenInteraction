@@ -382,8 +382,10 @@ class StreamingContextBridge(nn.Module):
     ) -> Optional["torch.Tensor"]:
         """Encode text string into a d_model semantic vector.
 
-        Uses the stored tokenizer/embedding reference. Falls back to
-        a deterministic hash-based projection if no tokenizer is set.
+        Uses the HF tokenizer + Thinker embedding table set via
+        set_tokenizer(). Guarantees semantic encoding: different
+        text produces different embeddings, same text produces
+        identical embeddings.
 
         Args:
             text: Text to encode (may be empty).
@@ -401,23 +403,17 @@ class StreamingContextBridge(nn.Module):
         tokenizer = getattr(self, '_tokenizer', None)
         embedding = getattr(self, '_token_embedding', None)
 
-        if tokenizer is not None and embedding is not None:
-            # Real semantic path: tokenize → embed → mean pool
-            tokens = tokenizer(
-                text, return_tensors="pt", truncation=True, max_length=128
-            ).to(device)
-            token_ids = tokens["input_ids"]  # [1, L]
-            embeds = embedding(token_ids)     # [1, L, d_model]
-            # Mean pool across tokens (excluding padding)
-            mask = token_ids.ne(tokenizer.pad_token_id or 0).float().unsqueeze(-1)
-            pooled = (embeds * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
-            return pooled  # [1, d_model]
-        else:
-            # Fallback: deterministic hash-based projection (better than random)
-            # This produces consistent embeddings for identical text
-            seed = hash(text) % (2**31)
-            gen = torch.Generator(device=device).manual_seed(seed)
-            return torch.randn(1, self.d_model, device=device, generator=gen) * 0.02
+        # Tokenize → embed → mean pool
+        tokens = tokenizer(
+            text, return_tensors="pt", truncation=True, max_length=128
+        )
+        token_ids = tokens["input_ids"].to(device)  # [1, L]
+        embeds = embedding(token_ids)                # [1, L, d_model]
+        # Mean pool (excluding padding)
+        pad_id = getattr(tokenizer, 'pad_token_id', None) or 0
+        mask = token_ids.ne(pad_id).float().unsqueeze(-1)
+        pooled = (embeds * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+        return pooled  # [1, d_model]
 
     def set_tokenizer(
         self,
