@@ -1,0 +1,49 @@
+# IDE
+.idea/
+
+# Bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Archives
+*.tar.gz
+*.zip
+
+# Deployment & debug scripts (AutoDL specific)
+scripts/check_modelscope.py
+scripts/check_shards.py
+scripts/dl_awq.py
+scripts/dl_awq_v2.py
+scripts/dl_modelscope.py
+scripts/dl_modelscope_full.py
+scripts/download_model.py
+scripts/download_model_w4a16.py
+scripts/download_models.py
+scripts/fix_and_start.sh
+scripts/fix_torch.sh
+scripts/run.sh
+scripts/run_demo_docker.sh
+scripts/run_vllm.sh
+scripts/setup_autodl.sh
+scripts/setup_environment.sh
+scripts/start_awq.sh
+scripts/start_server_autodl.sh
+scripts/start_vllm_final.sh
+scripts/start_vllm_server.sh
+scripts/test_vllm.py
+
+# Upload helper
+upload_to_autodl.py
+
+# Non-essential docs (keep README + ARCHITECTURE + COMPARISON)
+docs/AUTODL_GUIDE.md
+docs/GETTING_STARTED.md
+
+# Virtualenv
+venv*/
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db

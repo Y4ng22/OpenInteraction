@@ -1,0 +1,45 @@
+# InteractFormer Inference Configuration
+# =======================================
+# Configuration for inference and serving.
+
+inference:
+  device: cuda
+  dtype: bfloat16
+  streaming_session_enabled: true
+  max_micro_turns: 15000              # ~50 minutes at 200ms/turn
+  temperature: 0.7
+  top_p: 0.9
+  repetition_penalty: 1.1
+
+  # GPU memory management
+  gpu_memory_utilization: 0.90
+  max_num_seqs: 4                     # Max concurrent sequences
+  enable_prefix_caching: true
+
+  # Streaming session (TML-style persistent GPU sequences)
+  streaming_session:
+    enabled: true
+    max_session_duration_minutes: 60
+    idle_timeout_minutes: 5
+    reconnect_grace_period_seconds: 60
+
+  # Audio settings
+  audio:
+    input_sample_rate: 24000
+    output_sample_rate: 24000
+    chunk_duration_ms: 200
+    channels: 1
+
+  # Quality vs latency tradeoffs
+  quality:
+    talker_ode_steps: 10              # More steps = better quality, higher latency
+    bridge_fusion_layers: 24          # How many layers use bridge fusion
+    retrieval_top_k: 5
+    reasoning_max_steps: 10
+
+  # WebSocket server (for real-time client connections)
+  server:
+    host: 0.0.0.0
+    port: 8765
+    max_connections: 10
+    ping_interval_seconds: 5
