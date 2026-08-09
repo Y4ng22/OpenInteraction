@@ -145,9 +145,7 @@ class BackgroundModel:
         self.max_concurrent_tasks = max_concurrent_tasks
 
         # Ensemble components
-        self.reasoner = Reasoner(
-            model_name_or_path=model_name_or_path,
-        )
+        self.reasoner = Reasoner()
         self.retriever = Retriever() if enable_retrieval else None
         self.tool_executor = ToolExecutor() if enable_tools else None
 
@@ -223,12 +221,21 @@ class BackgroundModel:
             BackgroundResult objects (may be partial).
         """
         while self._running or not self._result_queue.empty():
+            # Non-blocking poll: if no results available, yield control
+            if self._result_queue.empty() and self._running:
+                # Worker is still alive, but no results yet — break to avoid spin
+                break
             try:
-                result = self._result_queue.get(timeout=timeout or 1.0)
+                result = self._result_queue.get(
+                    timeout=timeout if timeout is not None else 1.0
+                )
                 yield result
             except queue.Empty:
                 if not self._running:
                     break
+                # Running but queue is transiently empty — worker may be
+                # preparing next result; yield control back to caller
+                break
 
     def _worker_loop(self) -> None:
         """Main worker loop: process tasks from the queue."""

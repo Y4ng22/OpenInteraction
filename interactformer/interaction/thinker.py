@@ -261,7 +261,10 @@ class InteractionThinker(nn.Module):
         Args:
             input_embeddings: [B, T, d_model] multimodal embeddings.
             bridge_context: [B, num_slots, d_model] S2 context for bridge.
-            attention_mask: [T, T] causal attention mask.
+                Shared across all layers; each layer applies independent
+                gated cross-attention via BridgeAttentionSlot.
+                None if no S2 results are available yet.
+            attention_mask: [1, 1, T, T] causal attention mask.
             return_hidden: Whether to return all hidden states.
 
         Returns:
@@ -282,9 +285,9 @@ class InteractionThinker(nn.Module):
             routing_weights.append(routing)
 
             # Bridge attention (inject S2 context)
-            layer_bridge = bridge_context[i] if bridge_context is not None \
-                and i < len(bridge_context) else None
-            x = bridge_slot(x, layer_bridge)
+            # bridge_context: [B, num_slots, d_model] — shared across all layers.
+            # Each layer has its own BridgeAttentionSlot with independent gating.
+            x = bridge_slot(x, bridge_context)
 
         x = self.output_norm(x)
 

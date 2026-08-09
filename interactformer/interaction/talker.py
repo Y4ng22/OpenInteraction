@@ -134,24 +134,27 @@ class Code2WavRenderer(nn.Module):
             codebook_size * num_codebooks, codebook_dim
         )
 
-        # Streaming decoder (transposed convolutions for upsampling)
+        # Streaming decoder (transposed convolutions for upsampling).
+        # Target: 1 codec frame → 1920 audio samples @ 24kHz (80ms).
+        # Upsampling factors: 10 × 12 × 16 = 1920
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(
                 codebook_dim, codebook_dim * 2,
-                kernel_size=8, stride=4, padding=2,
+                kernel_size=10, stride=10, padding=0,
             ),
             nn.SiLU(),
             nn.ConvTranspose1d(
                 codebook_dim * 2, codebook_dim,
-                kernel_size=8, stride=4, padding=2,
+                kernel_size=12, stride=12, padding=0,
             ),
             nn.SiLU(),
             nn.ConvTranspose1d(
                 codebook_dim, 1,
-                kernel_size=12, stride=4, padding=4,
+                kernel_size=16, stride=16, padding=0,
             ),
             nn.Tanh(),  # Output in [-1, 1]
         )
+        # Verify: (1-1)*10 + 10 = 10; (10-1)*12 + 12 = 120; (120-1)*16 + 16 = 1920
 
         # Overlap-add buffer for smooth frame transitions
         self._overlap_buffer: Optional[torch.Tensor] = None

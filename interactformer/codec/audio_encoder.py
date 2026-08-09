@@ -31,7 +31,7 @@ class MelFilterbank(nn.Module):
     def __init__(
         self,
         sample_rate: int = 24000,
-        n_fft: int = 512,
+        n_fft: int = 1024,
         n_mels: int = 80,
         f_min: float = 80.0,
         f_max: float = 7600.0,
@@ -114,7 +114,7 @@ class DMelEncoder(nn.Module):
     def __init__(
         self,
         sample_rate: int = 24000,
-        n_fft: int = 512,
+        n_fft: int = 1024,      # Must be >= win_length, power of 2
         hop_length: int = 240,  # 10ms at 24kHz
         win_length: int = 600,  # 25ms at 24kHz
         n_mels: int = 80,

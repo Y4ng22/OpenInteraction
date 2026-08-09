@@ -15,6 +15,7 @@ Unlike a standard LLM call, the Reasoner:
 from typing import Optional, Generator, Dict, Any
 from dataclasses import dataclass
 from enum import Enum
+from abc import ABC, abstractmethod
 
 
 class ReasoningDepth(Enum):
@@ -43,30 +44,85 @@ class ReasoningStep:
             self.references = []
 
 
+class ReasoningBackend(ABC):
+    """Abstract interface for pluggable S2 reasoning backends.
+
+    Implementations can range from lightweight deterministic algorithms
+    to full LLM-based chain-of-thought engines.
+
+    All backends must support streaming partial outputs so S1 can
+    interleave intermediate results into the interaction.
+    """
+
+    @abstractmethod
+    def generate_stream(
+        self, query: str, context: Dict[str, Any]
+    ) -> Generator[ReasoningStep, None, None]:
+        """Generate reasoning steps as a stream.
+
+        Args:
+            query: The reasoning query.
+            context: Rich context from S1 (conversation, temporal state, etc.).
+
+        Yields:
+            ReasoningStep objects. The last step should have is_final=True.
+        """
+        ...
+
+
+class DeterministicBackend(ReasoningBackend):
+    """Lightweight deterministic backend for development and testing.
+
+    Produces structured reasoning steps without requiring an LLM.
+    Useful for validating the S1→S2→S1 pipeline during development.
+    """
+
+    def generate_stream(
+        self, query: str, context: Dict[str, Any]
+    ) -> Generator[ReasoningStep, None, None]:
+        silence_s = context.get("silence_duration_ms", 0) / 1000
+        num_cells = context.get("num_context_cells", 1)
+
+        steps = [
+            ReasoningStep(
+                step_id=0,
+                thought=f"Analyzing query in context of {num_cells} interaction cells...",
+                confidence=0.9,
+            ),
+            ReasoningStep(
+                step_id=1,
+                thought=f"User has been silent for {silence_s:.1f}s. "
+                        f"Considering temporal context for turn-taking implications.",
+                confidence=0.8,
+            ),
+            ReasoningStep(
+                step_id=2,
+                thought=f"Conclusion: The query appears to be about '{query[:80]}...'. "
+                        f"Further analysis would require a trained LLM backend.",
+                confidence=0.7,
+                is_final=True,
+            ),
+        ]
+        yield from steps
+
+
 class Reasoner:
     """Deep reasoning engine for the Background Model.
 
     Performs chain-of-thought reasoning on delegated queries. Results
-    are streamed incrementally so S1 can provide real-time feedback
-    (unlike DuplexOmni which returns a single 「...」 block).
+    are streamed incrementally so S1 can provide real-time feedback.
 
-    The Reasoner supports multiple reasoning strategies:
-    - Chain-of-thought: sequential step-by-step reasoning
-    - Tree-of-thought: branching exploration of alternatives
-    - Reflexion: iterative refinement with self-critique
+    Uses a pluggable ReasoningBackend for actual generation.
+    Defaults to DeterministicBackend for development.
     """
 
     def __init__(
         self,
-        model_name_or_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        backend: Optional[ReasoningBackend] = None,
         max_steps: int = 10,
-        temperature: float = 0.7,
-        strategy: str = "chain_of_thought",
     ):
-        self.model_name_or_path = model_name_or_path
+        self.backend = backend or DeterministicBackend()
         self.max_steps = max_steps
-        self.temperature = temperature
-        self.strategy = strategy
 
     def reason(
         self,
@@ -76,124 +132,52 @@ class Reasoner:
     ) -> Generator[ReasoningStep, None, None]:
         """Perform reasoning on a delegated query.
 
-        Args:
-            query: The question or task to reason about.
-            context: Rich context package from S1 including conversation
-                history, temporal state, and multimodal context.
-            depth: Desired reasoning depth.
+        Delegates to the pluggable backend for step generation.
 
         Yields:
             ReasoningStep objects as reasoning progresses.
-            S1 can consume these incrementally via the Bridge.
         """
-        # Determine effective depth
-        if depth == ReasoningDepth.ADAPTIVE:
-            effective_max = self._determine_depth(query, context)
-        elif depth == ReasoningDepth.DEEP:
-            effective_max = self.max_steps
-        else:
-            effective_max = min(3, self.max_steps)
+        # Normalize context keys: ContextPackager nests values inside
+        # 'temporal_state', but Reasoner expects them at top level
+        normalized = self._normalize_context(context)
 
-        # Build reasoning prompt from context
-        prompt = self._build_prompt(query, context)
-
-        # Multi-step reasoning loop
-        current_thought = query
-        references = []
-
-        for step_id in range(effective_max):
-            # Generate next reasoning step
-            # (In production, this calls the LLM)
-            step = self._generate_step(
-                prompt, current_thought, step_id, references
-            )
-
-            # Check if we've reached a conclusion
-            if step.is_final:
-                yield step
+        step_count = 0
+        for step in self.backend.generate_stream(query, normalized):
+            yield step
+            step_count += 1
+            if step_count >= self.max_steps:
                 break
 
-            yield step
-            current_thought = step.thought
+    def _normalize_context(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize context key structure between ContextPackager and Reasoner.
 
-    def _determine_depth(
-        self, query: str, context: Dict[str, Any]
-    ) -> int:
-        """Determine appropriate reasoning depth based on query complexity.
+        ContextPackager produces: {temporal_state: {silence_duration_ms: ...}, ...}
+        Reasoner expects:       {silence_duration_ms: ..., ...}
 
-        Simple questions ("What's the weather?") → shallow
-        Complex questions ("Why did the model fail?") → deep
+        Handle both formats.
         """
-        # Heuristic: longer queries + tool calls → deeper reasoning
-        complexity_score = min(len(query) / 100, 1.0)
-        if context.get("requires_tool_use"):
-            complexity_score += 0.3
-        if context.get("is_multiturn"):
-            complexity_score += 0.2
-
-        depth = int(complexity_score * self.max_steps)
-        return max(2, min(depth, self.max_steps))
-
-    def _build_prompt(
-        self, query: str, context: Dict[str, Any]
-    ) -> str:
-        """Build the reasoning prompt from the S1 context package.
-
-        This is where the "rich context package" (TML's term) is
-        transformed into a reasoning prompt. We include conversation
-        history, temporal information, and multimodal context.
-        """
-        parts = []
-
-        # System instruction
-        parts.append(
-            "You are the Background Reasoning Model of InteractFormer. "
-            "Your role is to perform deep reasoning on queries delegated "
-            "by the real-time Interaction Model. Think step by step and "
-            "provide your reasoning as a chain of thoughts."
-        )
-
-        # Conversation context from S1
-        if context.get("conversation_summary"):
-            parts.append(f"\n## Conversation Context\n{context['conversation_summary']}")
-
-        # Temporal context
-        silence_ms = context.get("silence_duration_ms", 0)
-        parts.append(f"\n## Temporal State\nUser has been silent for {silence_ms/1000:.1f}s")
-
-        # The actual query
-        parts.append(f"\n## Query\n{query}")
-
-        # Instruction for streaming output
-        parts.append(
-            "\nProvide your reasoning as numbered steps. Mark your final "
-            "conclusion with [FINAL]."
-        )
-
-        return "\n".join(parts)
-
-    def _generate_step(
-        self,
-        prompt: str,
-        previous_thought: str,
-        step_id: int,
-        references: list[str],
-    ) -> ReasoningStep:
-        """Generate a single reasoning step.
-
-        This is a placeholder that would call the actual LLM in production.
-        The real implementation uses the same model architecture as the
-        Interaction Thinker but with deeper reasoning prompts.
-        """
-        # Placeholder: in production, this calls the LLM
-        # For now, return a structured placeholder step
-        return ReasoningStep(
-            step_id=step_id,
-            thought=(
-                f"[S2 Reasoning Step {step_id}]: Analyzing '{previous_thought[:50]}...' "
-                f"in context of the conversation."
-            ),
-            confidence=0.8 - step_id * 0.1,  # Decreasing confidence per step
-            is_final=(step_id >= 3),
-            references=references,
-        )
+        result = dict(context)
+        # Flatten temporal_state if present
+        temporal = context.get("temporal_state", {})
+        if isinstance(temporal, dict):
+            for k, v in temporal.items():
+                if k not in result:
+                    result[k] = v
+        # Flatten interaction_state if present
+        inter = context.get("interaction_state", {})
+        if isinstance(inter, dict):
+            for k, v in inter.items():
+                if k not in result:
+                    result[k] = v
+        # Build conversation_summary from conversation list if present
+        conversation = context.get("conversation", [])
+        if conversation and "conversation_summary" not in result:
+            turns = []
+            for turn in conversation[-5:]:  # Last 5 turns
+                speaker = turn.get("speaker", "unknown")
+                content = turn.get("content", [])
+                if isinstance(content, list):
+                    content = " ".join(str(c) for c in content[:50])
+                turns.append(f"{speaker}: {content}")
+            result["conversation_summary"] = " | ".join(turns)
+        return result
