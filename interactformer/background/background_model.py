@@ -311,14 +311,15 @@ class BackgroundModel:
             if tool_results:
                 enriched_context["tool_results"] = tool_results.summary
 
-            steps = list(self.reasoner.reason(
-                query=task.query,
-                context=enriched_context,
-            ))
-            reasoning_steps = steps
+            # True streaming: iterate generator directly, pushing each
+            # partial result AS it arrives rather than collecting all first
+            reasoning_steps = []
+            for i, step in enumerate(self.reasoner.reason(
+                query=task.query, context=enriched_context,
+            )):
+                reasoning_steps.append(step)
 
-            # Stream intermediate reasoning steps
-            for i, step in enumerate(steps):
+                # Push intermediate step immediately for progressive S1 injection
                 if not step.is_final and i > 0:
                     partial = BackgroundResult(
                         task_id=task.task_id,

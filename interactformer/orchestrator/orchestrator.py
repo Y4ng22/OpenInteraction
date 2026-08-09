@@ -129,6 +129,27 @@ class Orchestrator:
         if self._initialized:
             return
 
+        # Wire tokenizer into bridge for semantic S2→S1 encoding.
+        # Uses local_files_only=True first to avoid HF network hang.
+        if self.bridge:
+            try:
+                from transformers import AutoTokenizer
+                tokenizer = AutoTokenizer.from_pretrained(
+                    "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+                    trust_remote_code=True,
+                    local_files_only=True,  # Don't hang on network
+                )
+                self.bridge.set_tokenizer(
+                    tokenizer,
+                    self.interaction_model.thinker.token_embedding,
+                )
+                self.interaction_model._tokenizer = tokenizer
+                print("[Orchestrator] Real tokenizer loaded for semantic bridge.")
+            except Exception:
+                print("[Orchestrator] No local tokenizer found. "
+                      "Using deterministic hash fallback for bridge encoding. "
+                      "(Set HF_ENDPOINT and download tokenizer for semantic encoding.)")
+
         # Start background model
         if self.background_model:
             self.background_model.start()
@@ -194,6 +215,10 @@ class Orchestrator:
                 reason="session_ended"
             )
 
+        # Clear per-session bridge state
+        if self.bridge:
+            self.bridge.reset_context(session_id=session_id)
+
         session.end()
         del self._sessions[session_id]
 
@@ -252,11 +277,18 @@ class Orchestrator:
                 new_bridge = self.bridge.embed_content_dicts(
                     injections, device=next(self.interaction_model.parameters()).device
                 )
-                # 4. Progressive update: blend with existing bridge state
-                self.bridge.update_context(new_bridge)
+                # 4. Progressive update with freshness metadata
+                self.bridge.update_context(
+                    new_bridge,
+                    session_id=session_id,
+                    metadata={
+                        "source_micro_turn_id": session.metrics.total_micro_turns,
+                        "current_micro_turn_id": session.metrics.total_micro_turns,
+                    },
+                )
 
-            # 5. Retrieve current bridge state for S1 consumption
-            bridge_context = self.bridge.get_current_context()
+            # 5. Retrieve current per-session bridge state for S1 consumption
+            bridge_context = self.bridge.get_current_context(session_id=session_id)
 
         # Process through Interaction Model
         timestamp_ms = session.metrics.total_micro_turns * self.micro_turn_ms

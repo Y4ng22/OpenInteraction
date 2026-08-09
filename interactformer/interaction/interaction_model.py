@@ -139,11 +139,23 @@ class InteractionModel(nn.Module):
         text_embeddings = None
         if text_tokens is not None:
             if isinstance(text_tokens, str):
-                # Convert raw string to token IDs via thinker's embedding table
-                # Placeholder tokenizer: use basic whitespace + truncation
-                # Real tokenizer should be wired in via Orchestrator
-                num_ids = min(len(text_tokens.split()), 128)
-                token_ids = torch.zeros((B, num_ids), dtype=torch.long, device=device)
+                # Use installed tokenizer if available, else fall back to
+                # whitespace-split and real token embedding lookup
+                tokenizer = getattr(self, '_tokenizer', None)
+                if tokenizer is not None:
+                    tokens = tokenizer(
+                        text_tokens, return_tensors="pt", truncation=True,
+                        max_length=128,
+                    )
+                    token_ids = tokens["input_ids"].to(device)
+                else:
+                    # Fallback: simple whitespace tokenization + vocabulary
+                    # mapping using a basic ascii-based hash
+                    words = text_tokens.lower().split()[:128]
+                    token_ids = torch.tensor(
+                        [[hash(w) % self.thinker.vocab_size for w in words]],
+                        dtype=torch.long, device=device,
+                    )
                 text_embeddings = self.thinker.token_embedding(token_ids)
             elif isinstance(text_tokens, torch.Tensor):
                 if text_tokens.dtype in (torch.long, torch.int32, torch.int64):
