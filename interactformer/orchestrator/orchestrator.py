@@ -129,26 +129,16 @@ class Orchestrator:
         if self._initialized:
             return
 
-        # Load tokenizer from HuggingFace (cached locally after first download).
-        # Tokenizer files are small (~3MB); 30s timeout prevents hang.
-        tokenizer = None
-        try:
-            from transformers import AutoTokenizer
-            import os
-            os.environ.setdefault("HF_HUB_DOWNLOAD_TIMEOUT", "30")
-            tokenizer = AutoTokenizer.from_pretrained(
-                "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-                trust_remote_code=True,
-            )
-            print("[Orchestrator] HuggingFace tokenizer loaded.")
-        except Exception as e:
-            raise RuntimeError(
-                "Failed to load HuggingFace tokenizer. "
-                "Ensure network access to huggingface.co (or set HF_ENDPOINT "
-                "for a mirror). Error: " + str(e)
-            )
+        # Load HuggingFace tokenizer (small ~3MB, cached after first download).
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(
+            "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+            trust_remote_code=True,
+        )
+        print("[Orchestrator] HuggingFace tokenizer loaded.")
 
-        # Wire into bridge and interaction model
+        # Wire tokenizer into bridge (for semantic S2→S1 encoding)
+        # and InteractionModel (for text input tokenization)
         if self.bridge:
             self.bridge.set_tokenizer(
                 tokenizer,

@@ -138,8 +138,7 @@ class InteractionModel(nn.Module):
         text_embeddings = None
         if text_tokens is not None:
             if isinstance(text_tokens, str):
-                tokenizer = self._tokenizer
-                tokens = tokenizer(
+                tokens = self._tokenizer(
                     text_tokens, return_tensors="pt",
                     truncation=True, max_length=128,
                 )

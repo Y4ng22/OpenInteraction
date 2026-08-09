@@ -382,10 +382,9 @@ class StreamingContextBridge(nn.Module):
     ) -> Optional["torch.Tensor"]:
         """Encode text string into a d_model semantic vector.
 
-        Uses the HF tokenizer + Thinker embedding table set via
-        set_tokenizer(). Guarantees semantic encoding: different
-        text produces different embeddings, same text produces
-        identical embeddings.
+        Uses the HuggingFace tokenizer + Thinker embedding table.
+        Different text → different embeddings.
+        Same text → identical embeddings (deterministic).
 
         Args:
             text: Text to encode (may be empty).
@@ -400,17 +399,14 @@ class StreamingContextBridge(nn.Module):
         if not text:
             return None
 
-        tokenizer = getattr(self, '_tokenizer', None)
-        embedding = getattr(self, '_token_embedding', None)
-
         # Tokenize → embed → mean pool
-        tokens = tokenizer(
+        tokens = self._tokenizer(
             text, return_tensors="pt", truncation=True, max_length=128
         )
         token_ids = tokens["input_ids"].to(device)  # [1, L]
-        embeds = embedding(token_ids)                # [1, L, d_model]
-        # Mean pool (excluding padding)
-        pad_id = getattr(tokenizer, 'pad_token_id', None) or 0
+        embeds = self._token_embedding(token_ids)    # [1, L, d_model]
+        # Mean pool across non-padding tokens
+        pad_id = self._tokenizer.pad_token_id or 0
         mask = token_ids.ne(pad_id).float().unsqueeze(-1)
         pooled = (embeds * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
         return pooled  # [1, d_model]
