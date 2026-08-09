@@ -21,6 +21,13 @@ from interactformer.interaction.temporal_grid import TemporalGrid, GridCell
 from interactformer.interaction.thinker import InteractionThinker
 from interactformer.interaction.talker import StreamingTalker
 from interactformer.interaction.interaction_model import InteractionModel
+from interactformer.interaction.micro_turn_sequence import (
+    BlockSpan,
+    InterleavedSequence,
+    MicroTurn,
+    MicroTurnInterleaver,
+    StreamKind,
+)
 
 __all__ = [
     "MultimodalEncoder",
@@ -29,4 +36,9 @@ __all__ = [
     "InteractionThinker",
     "StreamingTalker",
     "InteractionModel",
+    "BlockSpan",
+    "InterleavedSequence",
+    "MicroTurn",
+    "MicroTurnInterleaver",
+    "StreamKind",
 ]

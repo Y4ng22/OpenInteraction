@@ -103,7 +103,9 @@ class StreamingSession:
         user_id: Optional[str] = None,
         config: Optional[SessionConfig] = None,
     ):
-        self.session_id = session_id or str(uuid.uuid4())[:8]
+        # Full 128-bit identifier avoids collisions and makes session IDs
+        # unsuitable for casual guessing when exposed by a network service.
+        self.session_id = session_id or uuid.uuid4().hex
         self.user_id = user_id or "anonymous"
         self.config = config or SessionConfig()
 

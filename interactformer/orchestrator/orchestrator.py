@@ -81,9 +81,15 @@ class Orchestrator:
         micro_turn_ms: int = 200,
         enable_background: bool = True,
         enable_bridge: bool = True,
+        tokenizer: Optional[Any] = None,
+        tokenizer_name_or_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        trust_remote_code: bool = False,
     ):
         self.d_model = d_model
         self.micro_turn_ms = micro_turn_ms
+        self._tokenizer = tokenizer
+        self.tokenizer_name_or_path = tokenizer_name_or_path
+        self.trust_remote_code = trust_remote_code
 
         # Core models
         self.interaction_model = InteractionModel(
@@ -108,6 +114,13 @@ class Orchestrator:
 
         # Session management
         self._sessions: Dict[str, StreamingSession] = {}
+        self._session_runtime: Dict[str, Dict[str, Any]] = {}
+        self._session_injectors: Dict[str, StreamInjector] = {}
+        self._task_sessions: Dict[str, str] = {}
+        # A single model replica/GPU is shared, so mutable runtime state is
+        # swapped under this lock.  This prevents concurrent sessions from
+        # mixing temporal cells, silence counters, or talker overlap buffers.
+        self._model_lock = threading.RLock()
         self._scheduler = MicroTurnScheduler(
             SchedulerConfig(tick_duration_ms=micro_turn_ms)
         )
@@ -129,12 +142,21 @@ class Orchestrator:
         if self._initialized:
             return
 
-        # Load HuggingFace tokenizer (small ~3MB, cached after first download).
-        from transformers import AutoTokenizer
-        tokenizer = AutoTokenizer.from_pretrained(
-            "Qwen/Qwen3-Omni-30B-A3B-Instruct",
-            trust_remote_code=True,
-        )
+        self.interaction_model.eval()
+        if self.bridge:
+            self.bridge.eval()
+
+        # Loading repository-defined Python is opt-in.  A tokenizer does not
+        # normally need arbitrary remote code, and services should be able to
+        # inject an already-pinned/offline tokenizer.
+        tokenizer = self._tokenizer
+        if tokenizer is None:
+            from transformers import AutoTokenizer
+            tokenizer = AutoTokenizer.from_pretrained(
+                self.tokenizer_name_or_path,
+                trust_remote_code=self.trust_remote_code,
+            )
+            self._tokenizer = tokenizer
         print("[Orchestrator] HuggingFace tokenizer loaded.")
 
         # Wire tokenizer into bridge (for semantic S2→S1 encoding)
@@ -192,7 +214,17 @@ class Orchestrator:
             user_id=user_id,
             config=session_config,
         )
-        self._sessions[session.session_id] = session
+        with self._model_lock:
+            self._sessions[session.session_id] = session
+            self._session_runtime[session.session_id] = (
+                self.interaction_model.new_runtime_state()
+            )
+            if self.bridge_injector:
+                self._session_injectors[session.session_id] = StreamInjector(
+                    d_model=self.d_model,
+                    strategy=self.bridge_injector.scheduler.strategy,
+                    max_concurrent_streams=self.bridge_injector.max_concurrent_streams,
+                )
         return session
 
     def end_session(self, session_id: str) -> None:
@@ -201,15 +233,18 @@ class Orchestrator:
         Args:
             session_id: Session to end.
         """
+        with self._model_lock:
+            self._end_session_locked(session_id)
+
+    def _end_session_locked(self, session_id: str) -> None:
         session = self._sessions.get(session_id)
         if session is None:
             return
 
         # Cancel pending background tasks
-        if self.bridge_injector:
-            self.bridge_injector.cancel_topic(
-                reason="session_ended"
-            )
+        injector = self._session_injectors.pop(session_id, None)
+        if injector:
+            injector.cancel_topic(reason="session_ended")
 
         # Clear per-session bridge state
         if self.bridge:
@@ -217,8 +252,40 @@ class Orchestrator:
 
         session.end()
         del self._sessions[session_id]
+        self._session_runtime.pop(session_id, None)
+        self._task_sessions = {
+            task_id: owner for task_id, owner in self._task_sessions.items()
+            if owner != session_id
+        }
 
     def process_micro_turn(
+        self,
+        session_id: str,
+        audio_chunk: Optional["torch.Tensor"] = None,
+        image: Optional["torch.Tensor"] = None,
+        text_input: Optional[str] = None,
+    ) -> MicroTurnOutput:
+        """Process one isolated, serialized micro-turn for a session."""
+        import torch
+        with self._model_lock, torch.inference_mode():
+            session = self._sessions.get(session_id)
+            if session is None:
+                raise ValueError(f"Unknown session: {session_id}")
+            if not session.is_active:
+                return None
+            state = self._session_runtime[session_id]
+            self.interaction_model.load_runtime_state(state)
+            try:
+                return self._process_micro_turn_for_session(
+                    session_id=session_id,
+                    audio_chunk=audio_chunk,
+                    image=image,
+                    text_input=text_input,
+                )
+            finally:
+                self.interaction_model.save_runtime_state(state)
+
+    def _process_micro_turn_for_session(
         self,
         session_id: str,
         audio_chunk: Optional["torch.Tensor"] = None,
@@ -255,12 +322,13 @@ class Orchestrator:
 
         # Check for background model results via bridge
         bridge_context = None
-        if self.bridge and self.bridge_injector:
+        injector = self._session_injectors.get(session_id)
+        if self.bridge and injector:
             # 1. Poll S2 for completed/partial results
-            self._check_background_results(session)
+            self._check_background_results()
 
             # 2. Get pending S2→S1 injection messages from the queue
-            injections = self.bridge_injector.get_context_for_cell(
+            injections = injector.get_context_for_cell(
                 cell_id=session.metrics.total_micro_turns,
                 is_model_speaking=(
                     session.metrics.total_model_speech_turns >
@@ -372,27 +440,39 @@ class Orchestrator:
 
         # Submit to background model
         self.background_model.submit(task)
+        self._task_sessions[task.task_id] = session.session_id
         session.register_delegation(task.task_id)
 
     def _check_background_results(
-        self, session: StreamingSession
+        self,
     ) -> None:
         """Check for completed background tasks.
 
         Streams results from the Background Model into the Bridge
         for injection into S1.
         """
-        if not self.background_model or not self.bridge_injector:
+        if not self.background_model:
             return
 
         # Stream available results into the bridge
         for result in self.background_model.stream_results(timeout=0.0):
-            self.bridge_injector.receive_result(
+            owner_id = result.session_id or self._task_sessions.get(result.task_id)
+            if owner_id is None:
+                continue
+            owner = self._sessions.get(owner_id)
+            injector = self._session_injectors.get(owner_id)
+            if owner is None or injector is None:
+                self._task_sessions.pop(result.task_id, None)
+                continue
+
+            injector.receive_result(
                 result=result,
                 stream_id=result.task_id,
                 priority=InjectionPriority.NORMAL,
             )
-            session.complete_background_task(result.task_id)
+            if not result.partial:
+                owner.complete_background_task(result.task_id)
+                self._task_sessions.pop(result.task_id, None)
 
     def _on_bridge_check(self, tick_id: int) -> None:
         """Scheduler callback: check bridge for pending injections.
@@ -457,6 +537,16 @@ class Orchestrator:
     @property
     def bridge_stats(self) -> Optional[Dict]:
         """Get bridge injection statistics."""
-        if self.bridge_injector:
-            return self.bridge_injector.stats
-        return None
+        if not self.bridge_injector:
+            return None
+        totals = {
+            "total_injected": 0,
+            "total_cancelled": 0,
+            "total_expired": 0,
+            "pending": 0,
+            "active_streams": 0,
+        }
+        for injector in self._session_injectors.values():
+            for key, value in injector.stats.items():
+                totals[key] += value
+        return totals

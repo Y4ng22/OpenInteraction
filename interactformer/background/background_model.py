@@ -33,6 +33,7 @@ from enum import Enum
 import time
 import threading
 import queue
+from concurrent.futures import ThreadPoolExecutor
 
 from interactformer.background.reasoner import (
     Reasoner, ReasoningStep, ReasoningDepth,
@@ -94,6 +95,7 @@ class BackgroundResult:
         stream_id: Monotonically increasing ID for partial stream ordering.
     """
     task_id: str
+    session_id: Optional[str] = None
     reasoning_steps: list[ReasoningStep] = field(default_factory=list)
     retrieval: Optional[RetrievalResponse] = None
     tool_results: Optional[ToolResult] = None
@@ -139,6 +141,7 @@ class BackgroundModel:
         enable_retrieval: bool = True,
         enable_tools: bool = True,
         max_concurrent_tasks: int = 3,
+        max_pending_tasks: int = 64,
         result_stream_buffer: int = 100,
     ):
         self.model_name_or_path = model_name_or_path
@@ -150,11 +153,13 @@ class BackgroundModel:
         self.tool_executor = ToolExecutor() if enable_tools else None
 
         # Task management
-        self._task_queue: queue.Queue = queue.Queue()
+        self._task_queue: queue.Queue = queue.Queue(maxsize=max_pending_tasks)
         self._result_queue: queue.Queue = queue.Queue(maxsize=result_stream_buffer)
         self._active_tasks: Dict[str, BackgroundTask] = {}
+        self._state_lock = threading.RLock()
         self._running = False
         self._worker_thread: Optional[threading.Thread] = None
+        self._worker_threads: list[threading.Thread] = []
         self._stream_id_counter: int = 0
 
     def start(self) -> None:
@@ -163,19 +168,26 @@ class BackgroundModel:
             return
 
         self._running = True
-        self._worker_thread = threading.Thread(
-            target=self._worker_loop,
-            name="BackgroundModel-Worker",
-            daemon=True,
-        )
-        self._worker_thread.start()
+        self._worker_threads = [
+            threading.Thread(
+                target=self._worker_loop,
+                name=f"BackgroundModel-Worker-{index}",
+                daemon=True,
+            )
+            for index in range(max(1, self.max_concurrent_tasks))
+        ]
+        for worker in self._worker_threads:
+            worker.start()
+        # Retain the historical attribute for callers that inspect it.
+        self._worker_thread = self._worker_threads[0]
 
     def stop(self) -> None:
         """Stop the background worker thread."""
         self._running = False
-        if self._worker_thread:
-            self._worker_thread.join(timeout=5.0)
-            self._worker_thread = None
+        for worker in self._worker_threads:
+            worker.join(timeout=5.0)
+        self._worker_threads = []
+        self._worker_thread = None
 
     def submit(
         self,
@@ -192,16 +204,37 @@ class BackgroundModel:
         Returns:
             BackgroundResult if blocking=True, else None.
         """
-        self._task_queue.put(task)
-        self._active_tasks[task.task_id] = task
-
         if blocking:
-            # Wait for and return the result
-            while True:
-                result = self._result_queue.get()
-                if result.task_id == task.task_id and not result.partial:
+            # Process a blocking request directly.  Consuming the shared result
+            # queue here used to steal partial/final results belonging to other
+            # sessions and could wait forever for the requested task.
+            with self._state_lock:
+                if task.task_id in self._active_tasks:
+                    raise ValueError(f"Duplicate background task: {task.task_id}")
+                self._active_tasks[task.task_id] = task
+            try:
+                return self._process_task(task)
+            except Exception as e:
+                return BackgroundResult(
+                    task_id=task.task_id,
+                    session_id=task.context.get("session_id"),
+                    final_answer=f"Background processing error: {e}",
+                    confidence=0.0,
+                )
+            finally:
+                with self._state_lock:
                     self._active_tasks.pop(task.task_id, None)
-                    return result
+
+        with self._state_lock:
+            if task.task_id in self._active_tasks:
+                raise ValueError(f"Duplicate background task: {task.task_id}")
+            self._active_tasks[task.task_id] = task
+        try:
+            self._task_queue.put_nowait(task)
+        except queue.Full as e:
+            with self._state_lock:
+                self._active_tasks.pop(task.task_id, None)
+            raise RuntimeError("Background task queue is full") from e
 
         return None
 
@@ -248,17 +281,19 @@ class BackgroundModel:
             # Process the task
             try:
                 result = self._process_task(task)
-                self._result_queue.put(result)
+                self._emit_result(result)
             except Exception as e:
                 # Report error as a result
                 error_result = BackgroundResult(
                     task_id=task.task_id,
+                    session_id=task.context.get("session_id"),
                     final_answer=f"Background processing error: {e}",
                     confidence=0.0,
                 )
-                self._result_queue.put(error_result)
+                self._emit_result(error_result)
             finally:
-                self._active_tasks.pop(task.task_id, None)
+                with self._state_lock:
+                    self._active_tasks.pop(task.task_id, None)
 
     def _process_task(self, task: BackgroundTask) -> BackgroundResult:
         """Process a single task through the appropriate ensemble members.
@@ -287,18 +322,29 @@ class BackgroundModel:
             BackgroundTaskType.MIXED,
         )
 
-        # Stage 1: Retrieval and tool execution (parallel, no dependencies)
-        if use_retrieval and self.retriever:
-            retrieval = self.retriever.retrieve(
-                query=task.query,
-                context=task.context,
-            )
+        # Stage 1: retrieval and tools have no dependency on each other.
+        # Run them concurrently so a slow external tool does not add directly
+        # to retrieval latency before reasoning can start.
+        stage_futures = {}
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="S2-Stage1") as pool:
+            if use_retrieval and self.retriever:
+                stage_futures["retrieval"] = pool.submit(
+                    self.retriever.retrieve,
+                    query=task.query,
+                    context=task.context,
+                )
 
-        if use_tools and self.tool_executor:
-            # Check if the query implies tool calls
-            tool_specs = self._extract_tool_calls(task.query)
-            if tool_specs:
-                tool_results = self.tool_executor.execute(tool_specs)
+            if use_tools and self.tool_executor:
+                tool_specs = self._extract_tool_calls(task.query)
+                if tool_specs:
+                    stage_futures["tools"] = pool.submit(
+                        self.tool_executor.execute, tool_specs
+                    )
+
+            if "retrieval" in stage_futures:
+                retrieval = stage_futures["retrieval"].result()
+            if "tools" in stage_futures:
+                tool_results = stage_futures["tools"].result()
 
         # Stage 2: Reasoning (can use retrieval and tool results)
         if use_reasoning:
@@ -323,11 +369,12 @@ class BackgroundModel:
                 if not step.is_final and i > 0:
                     partial = BackgroundResult(
                         task_id=task.task_id,
+                        session_id=task.context.get("session_id"),
                         reasoning_steps=[step],
                         partial=True,
                         stream_id=self._next_stream_id(),
                     )
-                    self._result_queue.put(partial)
+                    self._emit_result(partial)
 
         # Fusion: combine all results with confidence weighting
         final_answer = self._fuse_results(
@@ -345,6 +392,7 @@ class BackgroundModel:
 
         return BackgroundResult(
             task_id=task.task_id,
+            session_id=task.context.get("session_id"),
             reasoning_steps=reasoning_steps,
             retrieval=retrieval,
             tool_results=tool_results,
@@ -462,5 +510,36 @@ class BackgroundModel:
 
     def _next_stream_id(self) -> int:
         """Get the next stream ID for ordering partial results."""
-        self._stream_id_counter += 1
-        return self._stream_id_counter
+        with self._state_lock:
+            self._stream_id_counter += 1
+            return self._stream_id_counter
+
+    def _emit_result(self, result: BackgroundResult) -> None:
+        """Publish without allowing a slow client to deadlock the worker.
+
+        When the bounded queue is full, stale partial updates are sacrificed
+        before final results.  The latest result is more useful to the live
+        interaction than blocking the entire S2 worker indefinitely.
+        """
+        try:
+            self._result_queue.put_nowait(result)
+            return
+        except queue.Full:
+            pass
+
+        try:
+            oldest = self._result_queue.get_nowait()
+        except queue.Empty:
+            return
+
+        if not oldest.partial and result.partial:
+            try:
+                self._result_queue.put_nowait(oldest)
+            except queue.Full:
+                pass
+            return
+
+        try:
+            self._result_queue.put_nowait(result)
+        except queue.Full:
+            pass

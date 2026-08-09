@@ -453,7 +453,14 @@ class DemoHandler(BaseHTTPRequestHandler):
 
         if path == "/api/proxy":
             # Proxy to vLLM
-            content_length = int(self.headers.get("Content-Length", 0))
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+            except ValueError:
+                self._respond(400, json.dumps({"error": "invalid Content-Length"}))
+                return
+            if content_length <= 0 or content_length > 1024 * 1024:
+                self._respond(413, json.dumps({"error": "request body too large or empty"}))
+                return
             body = self.rfile.read(content_length)
 
             try:
@@ -470,24 +477,20 @@ class DemoHandler(BaseHTTPRequestHandler):
             self._respond(404, "Not Found")
 
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+        self._respond(405, "Method Not Allowed", "text/plain; charset=utf-8")
 
     def _respond(self, status, body, content_type="application/json"):
         body = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
         self.wfile.write(body)
 
 
 def main():
     parser = argparse.ArgumentParser(description="InteractFormer Web Demo")
+    parser.add_argument("--host", default="127.0.0.1", help="Server bind host")
     parser.add_argument("--port", type=int, default=6006, help="Server port")
     parser.add_argument("--api", type=str, default="http://localhost:6006/v1",
                         help="vLLM API endpoint")
@@ -505,7 +508,7 @@ def main():
     print("  Press Ctrl+C to stop.")
     print()
 
-    server = HTTPServer(("0.0.0.0", args.port), DemoHandler)
+    server = HTTPServer((args.host, args.port), DemoHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -127,6 +127,7 @@ class StreamingBuffer:
 
         max_turns = max_history_ms // micro_turn_ms
         self._history: deque[MicroTurn] = deque(maxlen=max_turns)
+        self._pending_samples = np.array([], dtype=np.float32)
         self._current_turn_id: int = 0
         self._start_time_ms: Optional[float] = None
         self._lock = threading.Lock()
@@ -157,6 +158,12 @@ class StreamingBuffer:
             if self._start_time_ms is None:
                 self._start_time_ms = time.time() * 1000
 
+            samples = np.asarray(samples, dtype=np.float32)
+            if samples.ndim != 1:
+                raise ValueError("streaming samples must be a one-dimensional array")
+            if self._pending_samples.size:
+                samples = np.concatenate([self._pending_samples, samples])
+
             completed_turns = []
             offset = 0
             while offset + self.samples_per_turn <= len(samples):
@@ -181,6 +188,10 @@ class StreamingBuffer:
                 self._current_turn_id += 1
                 offset += self.samples_per_turn
 
+            # Preserve an incomplete tail for the next network/audio callback.
+            # Dropping it made chunk boundaries depend on callback packet size
+            # and caused gaps in long-running conversations.
+            self._pending_samples = samples[offset:].copy()
             return completed_turns
 
     def push_background_result(
@@ -212,6 +223,7 @@ class StreamingBuffer:
             self._history.clear()
             self._current_turn_id = 0
             self._start_time_ms = None
+            self._pending_samples = np.array([], dtype=np.float32)
 
 
 def chunk_audio_stream(

@@ -1,0 +1,7 @@
+# InteractFormer -> official MiniCPM-o Realtime gateway client only.
+# The GPU worker has a separate, pinned environment documented in
+# docs/MINICPMO_DEPLOYMENT.md. Do not install vLLM into that worker venv.
+numpy>=1.24.0
+soundfile>=0.12.1
+websockets>=16.0
+pyyaml>=6.0

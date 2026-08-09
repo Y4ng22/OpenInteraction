@@ -6,7 +6,17 @@
 
 ## Overview
 
-OpenInteraction is a research framework for **real-time, full-duplex human-AI interaction** across audio, video, and text modalities. It implements a **dual-model architecture** where an Interaction Model (S1) handles low-latency streaming interaction and a Background Model (S2) performs asynchronous deep reasoning, connected by a novel **Streaming Context Bridge**.
+OpenInteraction is a research framework for **real-time, full-duplex human-AI interaction** across audio, video, and text modalities. The runnable S1 baseline uses the official **MiniCPM-o 4.5 Realtime service**, while the custom Interaction Model remains a trainable TML-style student. A Background Model (S2) performs asynchronous deep reasoning through the Streaming Context Bridge research path.
+
+> **Project status:** this repository is an architecture prototype, not a
+> pretrained custom interaction model. The student S1 modules and codec heads are randomly
+> initialized unless you load trained weights. S2 defaults to a deterministic
+> development backend, and the retriever/search/code-interpreter integrations
+> are extension points. The Qwen identifier currently supplies the tokenizer;
+> it does not automatically turn this implementation into Qwen3-Omni. For a
+> runnable full-duplex baseline use the isolated MiniCPM-o Realtime backend. Use a
+> pinned tokenizer/model cache and a real, isolated S2/tool backend before
+> production deployment.
 
 ### Why OpenInteraction?
 
@@ -104,6 +114,33 @@ orch.end_session(session.session_id)
 
 ```bash
 python scripts/run_demo.py --duration 30 --with-background --verbose
+```
+
+### Tests
+
+```bash
+python -m pytest -q
+```
+
+HTTP demos bind to `127.0.0.1` by default. If `scripts/simple_server.py` is
+exposed on a non-loopback address, set `INTERACTFORMER_API_KEY`; remote model
+code loading remains disabled unless `INTERACTFORMER_TRUST_REMOTE_CODE=1` is
+explicitly set.
+
+For the TML-style reproduction plan and the safe DuplexOmni bootstrap strategy,
+see [`docs/TML_REPRODUCTION.md`](docs/TML_REPRODUCTION.md). Check a local or
+remote DuplexOmni `config.json` before downloading its weight shards:
+
+```bash
+python scripts/check_duplex_compat.py MuyeHuang/DuplexOmni
+```
+
+The selected deployment backend is MiniCPM-o 4.5. Environment, image, GPU and
+deployment commands are in [`docs/MINICPMO_DEPLOYMENT.md`](docs/MINICPMO_DEPLOYMENT.md):
+
+```bash
+python scripts/check_minicpmo_environment.py --path .
+pip install -r requirements-minicpmo-client.txt
 ```
 
 ---

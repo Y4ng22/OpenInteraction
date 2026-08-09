@@ -143,9 +143,9 @@ class ContextPackager:
                     "start_ms": cell.timestamp_ms,
                 }
 
-            # Add cell content to current turn
+            # Add cell's decoded text to current turn
             if cell.output_text:
-                current_turn["content"].extend(cell.output_text)
+                current_turn["content"].append(cell.output_text)
 
         # Add final turn
         if current_turn["speaker"] is not None:

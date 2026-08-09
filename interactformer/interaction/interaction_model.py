@@ -22,6 +22,7 @@ Key design decisions (vs. DuplexOmni S1):
 from typing import Optional, Dict, Generator
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 from interactformer.interaction.encoder import MultimodalEncoder
 from interactformer.interaction.temporal_grid import TemporalGrid, GridCell
@@ -101,12 +102,14 @@ class InteractionModel(nn.Module):
             d_model=d_model,
             num_codebooks=num_codebooks,
             sample_rate=audio_sample_rate,
+            chunk_duration_ms=micro_turn_ms,
         )
 
         # Runtime state
         self._streaming = False
         self._current_silence_ms: float = 0.0
 
+    @torch.inference_mode()
     def process_micro_turn(
         self,
         audio_chunk: Optional[torch.Tensor] = None,
@@ -132,7 +135,32 @@ class InteractionModel(nn.Module):
             MicroTurnOutput with speech, text, and metadata.
         """
         device = next(self.parameters()).device
-        B = 1  # Streaming processes one session at a time
+
+        # A heartbeat with no explicit input is still a real micro-turn: it
+        # represents silence.  Feeding a zero waveform keeps time advancing
+        # and lets the learned turn policy react without a special VAD path.
+        if audio_chunk is None and image is None and text_tokens is None:
+            audio_chunk = torch.zeros(
+                1, self.samples_per_turn, device=device, dtype=torch.float32
+            )
+
+        if audio_chunk is not None:
+            if not isinstance(audio_chunk, torch.Tensor):
+                audio_chunk = torch.as_tensor(audio_chunk)
+            if audio_chunk.dim() == 1:
+                audio_chunk = audio_chunk.unsqueeze(0)
+            if audio_chunk.dim() != 2 or audio_chunk.size(0) != 1:
+                raise ValueError("streaming audio must have shape [1, samples]")
+            if audio_chunk.size(1) > self.samples_per_turn:
+                raise ValueError(
+                    f"audio chunk has {audio_chunk.size(1)} samples; "
+                    f"expected at most {self.samples_per_turn}"
+                )
+            if audio_chunk.size(1) < self.samples_per_turn:
+                audio_chunk = F.pad(
+                    audio_chunk, (0, self.samples_per_turn - audio_chunk.size(1))
+                )
+            audio_chunk = torch.nan_to_num(audio_chunk.float()).to(device)
 
         # === Step 1: Encode multimodal input ===
         text_embeddings = None
@@ -153,7 +181,7 @@ class InteractionModel(nn.Module):
                     text_embeddings = text_tokens.to(device)
 
         fused = self.encoder(
-            audio=audio_chunk.to(device) if audio_chunk is not None else None,
+            audio=audio_chunk,
             images=image.to(device) if image is not None else None,
             text_embeddings=text_embeddings,
         )  # [B, T_enc, d_model]
@@ -261,9 +289,13 @@ class InteractionModel(nn.Module):
 
         # === Step 7: Generate text output ===
         text_logits = thinker_output["logits"][:, -1, :]  # Last token
-        # Write cell output for context packaging
         predicted_tokens = text_logits.argmax(dim=-1).tolist()  # [B]
-        cell.output_text = predicted_tokens
+        # Write decoded text for S2 consumption
+        if predicted_tokens:
+            cell.output_text_tokens = predicted_tokens
+            cell.output_text = self._tokenizer.decode(
+                predicted_tokens, skip_special_tokens=True
+            )
 
         # === Step 8: Check if delegation is needed ===
         delegation_score = thinker_output["delegation_score"].item()
@@ -334,6 +366,40 @@ class InteractionModel(nn.Module):
         self._streaming = False
         self.talker.interrupt()
         self.talker.reset()
+
+    def new_runtime_state(self) -> Dict:
+        """Create isolated mutable streaming state for one session."""
+        return {
+            "cells": {},
+            "current_cell_id": 0,
+            "current_silence_ms": 0.0,
+            "streaming": False,
+            "talker_interrupted": False,
+            "talker_overlap_buffer": None,
+            "talker_pending_waveform": None,
+        }
+
+    def load_runtime_state(self, state: Dict) -> None:
+        """Activate a session's state before a serialized model step."""
+        self.temporal_grid._cells = state["cells"]
+        self.temporal_grid._current_cell_id = state["current_cell_id"]
+        self._current_silence_ms = state["current_silence_ms"]
+        self._streaming = state["streaming"]
+        self.talker._interrupted = state["talker_interrupted"]
+        self.talker.renderer._overlap_buffer = state["talker_overlap_buffer"]
+        self.talker._pending_waveform = state["talker_pending_waveform"]
+
+    def save_runtime_state(self, state: Dict) -> None:
+        """Persist mutable streaming state after a model step."""
+        state.update({
+            "cells": self.temporal_grid._cells,
+            "current_cell_id": self.temporal_grid._current_cell_id,
+            "current_silence_ms": self._current_silence_ms,
+            "streaming": self._streaming,
+            "talker_interrupted": self.talker._interrupted,
+            "talker_overlap_buffer": self.talker.renderer._overlap_buffer,
+            "talker_pending_waveform": self.talker._pending_waveform,
+        })
 
     def forward(
         self,

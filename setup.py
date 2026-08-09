@@ -28,6 +28,7 @@ setup(
     python_requires=">=3.10",
     install_requires=[
         "torch>=2.0.0",
+        "transformers>=4.40.0",
         "numpy>=1.24.0",
         "pyyaml>=6.0",
         "tqdm>=4.65.0",
@@ -36,6 +37,7 @@ setup(
         "audio": ["torchaudio>=2.0.0", "librosa>=0.10.0", "soundfile>=0.12.0"],
         "vision": ["pillow>=10.0.0", "opencv-python>=4.8.0"],
         "serve": ["fastapi>=0.100.0", "uvicorn>=0.23.0", "websockets>=11.0"],
+        "minicpmo": ["websockets>=16.0", "numpy>=1.24.0", "soundfile>=0.12.1"],
         "dev": ["pytest>=7.0.0", "black>=23.0.0", "ruff>=0.1.0"],
     },
 )
