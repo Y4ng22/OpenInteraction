@@ -31,6 +31,8 @@ case "${ACTION}" in
         --revision "${MODEL_REVISION}" \
         --local-dir "${MODEL_DIR}"
     fi
+    PROJECT_DIR="${PROJECT_ROOT}" DEMO_DIR="${DEMO_DIR}" \
+      bash "${PROJECT_ROOT}/scripts/apply_minicpmo_ui_patches.sh"
     echo "Prepared demo: ${DEMO_DIR}"
     echo "Prepared model: ${MODEL_DIR}"
     ;;
