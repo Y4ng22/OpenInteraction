@@ -1,0 +1,30 @@
+diff --git a/static/omni/omni.html b/static/omni/omni.html
+--- a/static/omni/omni.html
++++ b/static/omni/omni.html
+@@ -30,26 +30,6 @@
+     </div>
+ </div>
+ 
+-<!-- ========== OpenInteraction Editorial Intro ========== -->
+-<section class="oi-intro" aria-labelledby="oiIntroTitle">
+-    <div class="oi-intro-rail">
+-        <span>OPENINTERACTION</span>
+-        <span>EXPERIMENT 01</span>
+-    </div>
+-    <div class="oi-intro-copy">
+-        <p class="oi-intro-kicker">TIME-ALIGNED MULTIMODAL ASSISTANT</p>
+-        <h1 id="oiIntroTitle">交互，不必等待<br>回合结束。</h1>
+-    </div>
+-    <div class="oi-intro-note">
+-        <p>让视频、声音与模型回应保持在同一条时间线上。它持续感知，也允许你随时打断。</p>
+-        <div class="oi-stream-key" aria-label="Input and output streams">
+-            <span><i class="oi-key-video"></i>视频</span>
+-            <span><i class="oi-key-audio"></i>声音</span>
+-            <span><i class="oi-key-model"></i>模型</span>
+-        </div>
+-    </div>
+-</section>
+-
+ <!-- ========== Notice Banner ========== -->
+ <!-- <div class="notice-banner" id="noticeBanner">
+     <span class="notice-icon">&#x1F3A7;</span>

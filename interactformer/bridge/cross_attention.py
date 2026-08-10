@@ -325,8 +325,11 @@ class StreamingContextBridge(nn.Module):
     ) -> torch.Tensor:
         """Convert StreamInjector content dicts to bridge tensor.
 
-        Parses the text payloads from the bridge message queue and
-        projects them into [B, num_slots, d_model] for S1 consumption.
+        Encodes S2 text output SEMANTICALLY using the tokenizer/embedding
+        from the S1 Thinker, then projects via BridgeProjector.
+
+        This is the canonical SCB semantic path: S2 text → token IDs →
+        learned embedding → mean pool → projector → bridge slots.
 
         Args:
             content_list: List of content dicts from StreamInjector,
@@ -358,34 +361,96 @@ class StreamingContextBridge(nn.Module):
             slot_texts[idx] += item_data + " "
             slot_confidences[idx] = max(slot_confidences[idx], item_conf)
 
-        # Simple text→embedding: use a learned projection of bag-of-words
-        # For the initial implementation, use the projector's encoders
-        # with a dummy embedding path (each text string → d_model via
-        # the text_encoder which expects [B, d_model]).
-        s2_text_embed = None
-        s2_retrieval_embed = None
-        s2_tool_embed = None
+        # Semantic S2→S1 encoding: text → token_ids → embedding → pool → project
+        s2_text_embed = self._encode_text(slot_texts[0], device)
+        s2_retrieval_embed = self._encode_text(slot_texts[1], device)
+        s2_tool_embed = self._encode_text(slot_texts[2], device)
 
-        if slot_texts[0].strip():
-            s2_text_embed = torch.randn(B, self.d_model, device=device) * 0.02
-        if slot_texts[1].strip():
-            s2_retrieval_embed = torch.randn(B, self.d_model, device=device) * 0.02
-        if slot_texts[2].strip():
-            s2_tool_embed = torch.randn(B, self.d_model, device=device) * 0.02
+        # Apply confidence weighting to each embedding
+        for embed, conf in [
+            (s2_text_embed, slot_confidences[0]),
+            (s2_retrieval_embed, slot_confidences[1]),
+            (s2_tool_embed, slot_confidences[2]),
+        ]:
+            if embed is not None:
+                embed.mul_(max(conf, 0.1))
 
         return self.projector(s2_text_embed, s2_retrieval_embed, s2_tool_embed)
 
-    def get_current_context(self) -> Optional["torch.Tensor"]:
-        """Get the current bridge context tensor.
+    def _encode_text(
+        self, text: str, device: "torch.device"
+    ) -> Optional["torch.Tensor"]:
+        """Encode text string into a d_model semantic vector.
+
+        Uses the HuggingFace tokenizer + Thinker embedding table.
+        Different text → different embeddings.
+        Same text → identical embeddings (deterministic).
+
+        Args:
+            text: Text to encode (may be empty).
+            device: Target device.
+
+        Returns:
+            [1, d_model] tensor, or None if text is empty.
+        """
+        import torch
+
+        text = text.strip()
+        if not text:
+            return None
+
+        # Tokenize → embed → mean pool
+        tokens = self._tokenizer(
+            text, return_tensors="pt", truncation=True, max_length=128
+        )
+        token_ids = tokens["input_ids"].to(device)  # [1, L]
+        embeds = self._token_embedding(token_ids)    # [1, L, d_model]
+        # Mean pool across non-padding tokens
+        pad_id = self._tokenizer.pad_token_id or 0
+        mask = token_ids.ne(pad_id).float().unsqueeze(-1)
+        pooled = (embeds * mask).sum(dim=1) / mask.sum(dim=1).clamp(min=1)
+        return pooled  # [1, d_model]
+
+    def set_tokenizer(
+        self,
+        tokenizer: object,
+        token_embedding: "torch.nn.Module",
+    ) -> None:
+        """Set the tokenizer and embedding for semantic text encoding.
+
+        Args:
+            tokenizer: HuggingFace tokenizer (or compatible).
+            token_embedding: nn.Embedding from S1 Thinker.
+        """
+        self._tokenizer = tokenizer
+        self._token_embedding = token_embedding
+
+    def get_current_context(
+        self, session_id: Optional[str] = None
+    ) -> Optional["torch.Tensor"]:
+        """Get the current bridge context tensor for a session.
+
+        Args:
+            session_id: Session identifier for per-session isolation.
+                If None, returns global (shared) context.
 
         Returns:
             [1, num_bridge_slots, d_model] or None if no S2 results yet.
         """
-        if not hasattr(self, '_current_bridge_context'):
+        key = session_id or "_global"
+        if not hasattr(self, '_bridge_states'):
+            self._bridge_states = {}
+        entry = self._bridge_states.get(key)
+        if entry is None:
             return None
-        return self._current_bridge_context
+        return entry.get("tensor")
 
-    def update_context(self, new_context: "torch.Tensor") -> None:
+    def update_context(
+        self,
+        new_context: "torch.Tensor",
+        session_id: Optional[str] = None,
+        metadata: Optional[dict] = None,
+    ) -> None:
         """Update the bridge context with new S2 results.
 
         Progressive update: blends new context with existing state
@@ -393,21 +458,52 @@ class StreamingContextBridge(nn.Module):
 
         Args:
             new_context: [1, num_bridge_slots, d_model] new bridge tensor.
+            session_id: Session identifier for per-session isolation.
+            metadata: Optional dict with freshness info:
+                micro_turn_id, source_micro_turn_id, confidence, timestamp.
         """
-        if not hasattr(self, '_current_bridge_context') or \
-           self._current_bridge_context is None:
-            self._current_bridge_context = new_context
-        else:
-            # Progressive blend: 70% old + 30% new for stability
-            alpha = 0.3
-            self._current_bridge_context = (
-                (1 - alpha) * self._current_bridge_context +
-                alpha * new_context
-            )
+        import time as _time
+        key = session_id or "_global"
+        if not hasattr(self, '_bridge_states'):
+            self._bridge_states = {}
 
-    def reset_context(self) -> None:
+        current = self._bridge_states.get(key)
+        meta = metadata or {}
+
+        # Freshness check: reject stale results
+        if current is not None:
+            current_turn = meta.get("current_micro_turn_id", 0)
+            source_turn = meta.get("source_micro_turn_id", 0)
+            stale_threshold = meta.get("stale_threshold", 50)
+            if current_turn > 0 and source_turn > 0:
+                if current_turn - source_turn > stale_threshold:
+                    # Result is too stale; discard
+                    return
+
+        # Progressive blend or initial set
+        if current is None or current.get("tensor") is None:
+            self._bridge_states[key] = {
+                "tensor": new_context,
+                "source_turn": meta.get("source_micro_turn_id", 0),
+                "updated_at": _time.time(),
+                "version": 0,
+            }
+        else:
+            alpha = meta.get("blend_alpha", 0.3)
+            prev = current["tensor"]
+            self._bridge_states[key] = {
+                "tensor": (1 - alpha) * prev + alpha * new_context,
+                "source_turn": meta.get("source_micro_turn_id", 0),
+                "updated_at": _time.time(),
+                "version": current.get("version", 0) + 1,
+            }
+
+    def reset_context(self, session_id: Optional[str] = None) -> None:
         """Clear bridge context (e.g., on session end or topic change)."""
-        self._current_bridge_context = None
+        if not hasattr(self, '_bridge_states'):
+            return
+        key = session_id or "_global"
+        self._bridge_states.pop(key, None)
 
     def fuse_layer(
         self,

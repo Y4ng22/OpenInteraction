@@ -18,7 +18,9 @@ model:
 
   background:
     model_type: llm
-    model_name_or_path: Qwen/Qwen3-Omni-30B-A3B-Instruct
+    # S2 provider is selected through S2_LLM_PROVIDER. API keys must remain in
+    # the environment; see .env.example. ARK_MODEL_ID can override this value.
+    model_name_or_path: doubao-seed-evolving
     max_context_length: 32768
     ensemble_mode: parallel            # "parallel", "cascade", "voting"
     reasoning_depth: adaptive          # "shallow", "deep", "adaptive"

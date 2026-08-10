@@ -277,11 +277,16 @@ class InteractionThinker(nn.Module):
         x = input_embeddings
         routing_weights = []
 
+        # Build position IDs for RoPE
+        position_ids = torch.arange(
+            0, T, dtype=torch.long, device=device
+        ).unsqueeze(0)  # [1, T]
+
         for i, (layer, bridge_slot) in enumerate(
             zip(self.layers, self.bridge_slots)
         ):
-            # Transformer layer
-            x, routing = layer(x, attention_mask)
+            # Transformer layer with RoPE
+            x, routing = layer(x, attention_mask, self.rotary_emb, position_ids)
             routing_weights.append(routing)
 
             # Bridge attention (inject S2 context)
@@ -355,12 +360,16 @@ class ThinkerLayer(nn.Module):
         self,
         x: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
+        rotary_emb: Optional["RotaryEmbedding"] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Process through attention + MoE FFN.
 
         Args:
             x: [B, T, d_model]
             attention_mask: [T, T] or [B, 1, T, T]
+            rotary_emb: Optional RoPE module for positional encoding.
+            position_ids: [B, T] position indices for RoPE.
 
         Returns:
             output: [B, T, d_model]
@@ -369,7 +378,7 @@ class ThinkerLayer(nn.Module):
         # Self-attention with GQA
         residual = x
         x = self.attn_norm(x)
-        x = self._attention(x, attention_mask)
+        x = self._attention(x, attention_mask, rotary_emb, position_ids)
         x = self.dropout(x) + residual
 
         # MoE FFN
@@ -384,21 +393,35 @@ class ThinkerLayer(nn.Module):
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
+        rotary_emb: Optional["RotaryEmbedding"] = None,
+        position_ids: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Grouped Query Attention.
+        """Grouped Query Attention with optional RoPE.
 
         Args:
             x: [B, T, d_model]
             mask: Optional attention mask.
+            rotary_emb: Optional RotaryEmbedding instance for RoPE.
+            position_ids: [B, T] position indices for RoPE.
 
         Returns:
             [B, T, d_model]
         """
         B, T, D = x.shape
 
-        q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim).transpose(1, 2)
-        k = self.k_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = self.v_proj(x).view(B, T, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        q = self.q_proj(x).view(B, T, self.num_heads, self.head_dim)
+        k = self.k_proj(x).view(B, T, self.num_kv_heads, self.head_dim)
+        v = self.v_proj(x).view(B, T, self.num_kv_heads, self.head_dim)
+
+        # Apply RoPE if available
+        if rotary_emb is not None and position_ids is not None:
+            cos, sin = rotary_emb(x, position_ids)
+            q = _apply_rotary_pos_emb(q, cos, sin)
+            k = _apply_rotary_pos_emb(k, cos, sin)
+
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
 
         # Expand KV heads to match Q heads (GQA)
         k = k.repeat_interleave(self.num_heads // self.num_kv_heads, dim=1)
@@ -417,6 +440,36 @@ class ThinkerLayer(nn.Module):
         # Merge heads
         attn = attn.transpose(1, 2).contiguous().view(B, T, D)
         return self.o_proj(attn)
+
+
+def _apply_rotary_pos_emb(
+    x: torch.Tensor,
+    cos: torch.Tensor,
+    sin: torch.Tensor,
+) -> torch.Tensor:
+    """Apply rotary position embedding to tensor x.
+
+    Args:
+        x: [B, T, num_heads, head_dim]
+        cos, sin: [B, T, head_dim] precomputed frequencies.
+
+    Returns:
+        [B, T, num_heads, head_dim] rotated tensor.
+    """
+    # Unsqueeze head dimension for broadcasting: [B, T, head_dim] → [B, T, 1, head_dim]
+    cos = cos.unsqueeze(2)
+    sin = sin.unsqueeze(2)
+
+    # Interleave: first half, second half
+    d = x.shape[-1] // 2
+    x1, x2 = x[..., :d], x[..., d:]
+    cos = cos[..., :d]
+    sin = sin[..., :d]
+    rotated = torch.cat([
+        x1 * cos - x2 * sin,
+        x2 * cos + x1 * sin,
+    ], dim=-1)
+    return rotated
 
 
 class RotaryEmbedding(nn.Module):

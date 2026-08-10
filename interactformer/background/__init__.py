@@ -20,13 +20,21 @@ Key innovation vs. DuplexOmni S2:
 - Confidence-weighted fusion of multiple reasoning paths
 """
 
-from interactformer.background.reasoner import Reasoner
+from interactformer.background.reasoner import (
+    AnthropicCompatibleBackend,
+    OpenAICompatibleBackend,
+    Reasoner,
+    reasoning_backend_from_env,
+)
 from interactformer.background.retriever import Retriever
 from interactformer.background.tool_executor import ToolExecutor
 from interactformer.background.background_model import BackgroundModel
 
 __all__ = [
     "Reasoner",
+    "AnthropicCompatibleBackend",
+    "OpenAICompatibleBackend",
+    "reasoning_backend_from_env",
     "Retriever",
     "ToolExecutor",
     "BackgroundModel",

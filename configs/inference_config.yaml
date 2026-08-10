@@ -3,6 +3,7 @@
 # Configuration for inference and serving.
 
 inference:
+  backend: minicpmo_realtime
   device: cuda
   dtype: bfloat16
   streaming_session_enabled: true
@@ -25,10 +26,22 @@ inference:
 
   # Audio settings
   audio:
-    input_sample_rate: 24000
+    capture_sample_rate: 24000
+    model_input_sample_rate: 16000
     output_sample_rate: 24000
     chunk_duration_ms: 200
+    model_chunk_duration_ms: 1000
     channels: 1
+
+  # MiniCPM-o 4.5 runs as an isolated official Realtime service. Five local
+  # 200ms cells are accumulated into its native one-second TDM input unit.
+  minicpmo:
+    gateway_url: http://127.0.0.1:8006
+    mode: video
+    verify_tls: true
+    bearer_token_env: MINICPMO_API_TOKEN
+    max_message_bytes: 16777216
+    max_slice_nums: 1
 
   # Quality vs latency tradeoffs
   quality:
@@ -39,7 +52,7 @@ inference:
 
   # WebSocket server (for real-time client connections)
   server:
-    host: 0.0.0.0
+    host: 127.0.0.1                    # Expose only behind an authenticated proxy
     port: 8765
     max_connections: 10
     ping_interval_seconds: 5

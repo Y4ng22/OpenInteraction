@@ -12,8 +12,10 @@ are fused with other S2 outputs before streaming back to S1.
 from typing import Optional, Dict, Any, Callable, List
 from dataclasses import dataclass, field
 from enum import Enum
+import ast
 import time
 import json
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 
 
 class ToolStatus(Enum):
@@ -70,7 +72,10 @@ class ToolResult:
 
     @property
     def failure_count(self) -> int:
-        return sum(1 for c in self.calls if c.status == ToolStatus.FAILED)
+        return sum(
+            1 for c in self.calls
+            if c.status in (ToolStatus.FAILED, ToolStatus.TIMEOUT)
+        )
 
     @property
     def all_succeeded(self) -> bool:
@@ -150,12 +155,41 @@ class ToolExecutor:
             )
             pending.append(call)
 
-        # Execute in parallel batches
+        # Execute in parallel batches.  Timed-out callables are detached from
+        # the interaction path; production deployments should still isolate
+        # untrusted tools in killable worker processes/containers.
         for i in range(0, len(pending), self.max_parallel_calls):
             batch = pending[i:i + self.max_parallel_calls]
-
+            pool = ThreadPoolExecutor(
+                max_workers=max(1, len(batch)),
+                thread_name_prefix="InteractFormer-Tool",
+            )
+            futures = []
+            batch_deadline = time.monotonic() + self.default_timeout_ms / 1000.0
             for call in batch:
-                self._execute_one(call)
+                isolated_call = ToolCall(
+                    tool_name=call.tool_name,
+                    tool_id=call.tool_id,
+                    arguments=dict(call.arguments),
+                )
+                futures.append((call, pool.submit(self._execute_one, isolated_call)))
+
+            for call, future in futures:
+                call.start_time_ms = time.time() * 1000
+                try:
+                    remaining = max(0.0, batch_deadline - time.monotonic())
+                    completed = future.result(timeout=remaining)
+                    call.status = completed.status
+                    call.result = completed.result
+                    call.error = completed.error
+                    call.start_time_ms = completed.start_time_ms
+                    call.duration_ms = completed.duration_ms
+                except FutureTimeoutError:
+                    call.status = ToolStatus.TIMEOUT
+                    call.error = f"Tool timed out after {self.default_timeout_ms}ms"
+                    call.duration_ms = time.time() * 1000 - call.start_time_ms
+                    future.cancel()
+            pool.shutdown(wait=False, cancel_futures=True)
 
             results.extend(batch)
 
@@ -169,7 +203,7 @@ class ToolExecutor:
             total_duration_ms=total_ms,
         )
 
-    def _execute_one(self, call: ToolCall) -> None:
+    def _execute_one(self, call: ToolCall) -> ToolCall:
         """Execute a single tool call with timeout and retries."""
         call.status = ToolStatus.RUNNING
         call.start_time_ms = time.time() * 1000
@@ -179,7 +213,7 @@ class ToolExecutor:
             call.status = ToolStatus.FAILED
             call.error = f"Unknown tool: {call.tool_name}"
             call.duration_ms = time.time() * 1000 - call.start_time_ms
-            return
+            return call
 
         # Try execution with retries
         for attempt in range(self.max_retries + 1):
@@ -195,26 +229,16 @@ class ToolExecutor:
                 call.error = str(e)
 
         call.duration_ms = time.time() * 1000 - call.start_time_ms
+        return call
 
     def _register_builtin_tools(self) -> None:
         """Register the default set of built-in tools."""
 
         # Calculator tool
         def calculator(args: Dict[str, Any]) -> str:
-            expression = args.get("expression", "")
+            expression = str(args.get("expression", ""))
             try:
-                # Safe eval with limited builtins
-                result = eval(
-                    expression,
-                    {"__builtins__": {}},
-                    {
-                        "abs": abs, "round": round,
-                        "min": min, "max": max,
-                        "sum": sum, "len": len,
-                        "int": int, "float": float,
-                        "str": str, "list": list,
-                    },
-                )
+                result = self._safe_calculate(expression)
                 return str(result)
             except Exception as e:
                 return f"Calculation error: {e}"
@@ -237,6 +261,91 @@ class ToolExecutor:
             "search": search,
             "code_interpreter": code_interpreter,
         })
+
+    @classmethod
+    def _safe_calculate(cls, expression: str) -> Any:
+        """Evaluate a small arithmetic expression without executing Python.
+
+        Removing ``eval`` is important here because calculator input can be
+        produced by a model or supplied by a remote user.  An empty builtins
+        dictionary is not a security boundary: Python object traversal can be
+        used to recover powerful objects.  This evaluator accepts only numeric
+        literals, arithmetic operators, short lists/tuples, and a tiny function
+        allowlist.
+        """
+        if not expression or len(expression) > 512:
+            raise ValueError("expression must contain 1-512 characters")
+
+        tree = ast.parse(expression, mode="eval")
+        if sum(1 for _ in ast.walk(tree)) > 128:
+            raise ValueError("expression is too complex")
+        return cls._eval_calculator_node(tree.body)
+
+    @classmethod
+    def _eval_calculator_node(cls, node: ast.AST) -> Any:
+        binary_ops = {
+            ast.Add: lambda a, b: a + b,
+            ast.Sub: lambda a, b: a - b,
+            ast.Mult: lambda a, b: a * b,
+            ast.Div: lambda a, b: a / b,
+            ast.FloorDiv: lambda a, b: a // b,
+            ast.Mod: lambda a, b: a % b,
+        }
+        unary_ops = {
+            ast.UAdd: lambda value: +value,
+            ast.USub: lambda value: -value,
+        }
+        functions = {
+            "abs": abs,
+            "round": round,
+            "min": min,
+            "max": max,
+            "sum": sum,
+            "len": len,
+            "int": int,
+            "float": float,
+        }
+
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+                raise ValueError("only numeric literals are allowed")
+            return node.value
+
+        if isinstance(node, (ast.List, ast.Tuple)):
+            if len(node.elts) > 32:
+                raise ValueError("collections are limited to 32 items")
+            return [cls._eval_calculator_node(item) for item in node.elts]
+
+        if isinstance(node, ast.UnaryOp) and type(node.op) in unary_ops:
+            return unary_ops[type(node.op)](cls._eval_calculator_node(node.operand))
+
+        if isinstance(node, ast.BinOp):
+            left = cls._eval_calculator_node(node.left)
+            right = cls._eval_calculator_node(node.right)
+            if isinstance(node.op, ast.Pow):
+                if abs(right) > 100:
+                    raise ValueError("exponent is too large")
+                result = left ** right
+            elif type(node.op) in binary_ops:
+                result = binary_ops[type(node.op)](left, right)
+            else:
+                raise ValueError("operator is not allowed")
+            if isinstance(result, int) and result.bit_length() > 4096:
+                raise ValueError("integer result is too large")
+            return result
+
+        if isinstance(node, ast.Call):
+            if (
+                not isinstance(node.func, ast.Name)
+                or node.func.id not in functions
+                or node.keywords
+                or len(node.args) > 32
+            ):
+                raise ValueError("function is not allowed")
+            args = [cls._eval_calculator_node(arg) for arg in node.args]
+            return functions[node.func.id](*args)
+
+        raise ValueError(f"unsupported expression: {type(node).__name__}")
 
     @staticmethod
     def _build_summary(results: List[ToolCall]) -> str:

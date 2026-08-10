@@ -107,6 +107,68 @@ class InteractionModel(nn.Module):
         self._streaming = False
         self._current_silence_ms: float = 0.0
 
+    def new_runtime_state(self) -> Dict[str, object]:
+        """Create an empty, session-owned streaming state container.
+
+        Model weights are shared across sessions, but the temporal grid and
+        talker buffers must not be.  The orchestrator swaps this lightweight
+        state before processing each session's next micro-turn.
+        """
+        return {
+            "cells": {},
+            "current_cell_id": 0,
+            "streaming": False,
+            "current_silence_ms": 0.0,
+            "talker_interrupted": False,
+            "talker_pending_waveform": None,
+            "renderer_overlap_buffer": None,
+        }
+
+    @staticmethod
+    def _clone_runtime_tensor(value: Optional[torch.Tensor]) -> Optional[torch.Tensor]:
+        """Detach a runtime buffer from the currently active session."""
+        return None if value is None else value.detach().clone()
+
+    def load_runtime_state(self, state: Dict[str, object]) -> None:
+        """Activate one session's state without sharing mutable buffers."""
+        cells = state.setdefault("cells", {})
+        if not isinstance(cells, dict):
+            raise TypeError("runtime state's 'cells' value must be a dictionary")
+
+        self.temporal_grid._cells = cells
+        self.temporal_grid._current_cell_id = int(
+            state.setdefault("current_cell_id", 0)
+        )
+        self._streaming = bool(state.setdefault("streaming", False))
+        self._current_silence_ms = float(
+            state.setdefault("current_silence_ms", 0.0)
+        )
+        self.talker._interrupted = bool(
+            state.setdefault("talker_interrupted", False)
+        )
+        self.talker._pending_waveform = self._clone_runtime_tensor(
+            state.setdefault("talker_pending_waveform", None)
+        )
+        self.talker.renderer._overlap_buffer = self._clone_runtime_tensor(
+            state.setdefault("renderer_overlap_buffer", None)
+        )
+
+    def save_runtime_state(self, state: Dict[str, object]) -> None:
+        """Persist the active streaming state back to its session container."""
+        # Copy the dictionary container so a later grid reassignment cannot
+        # make two sessions accidentally share their cell registry.
+        state["cells"] = dict(self.temporal_grid._cells)
+        state["current_cell_id"] = self.temporal_grid._current_cell_id
+        state["streaming"] = self._streaming
+        state["current_silence_ms"] = self._current_silence_ms
+        state["talker_interrupted"] = self.talker._interrupted
+        state["talker_pending_waveform"] = self._clone_runtime_tensor(
+            self.talker._pending_waveform
+        )
+        state["renderer_overlap_buffer"] = self._clone_runtime_tensor(
+            self.talker.renderer._overlap_buffer
+        )
+
     def process_micro_turn(
         self,
         audio_chunk: Optional[torch.Tensor] = None,
@@ -135,15 +197,14 @@ class InteractionModel(nn.Module):
         B = 1  # Streaming processes one session at a time
 
         # === Step 1: Encode multimodal input ===
-        # text_tokens: accept LongTensor token IDs or str (convert via tokenizer)
         text_embeddings = None
         if text_tokens is not None:
             if isinstance(text_tokens, str):
-                # Convert raw string to token IDs via thinker's embedding table
-                # Placeholder tokenizer: use basic whitespace + truncation
-                # Real tokenizer should be wired in via Orchestrator
-                num_ids = min(len(text_tokens.split()), 128)
-                token_ids = torch.zeros((B, num_ids), dtype=torch.long, device=device)
+                tokens = self._tokenizer(
+                    text_tokens, return_tensors="pt",
+                    truncation=True, max_length=128,
+                )
+                token_ids = tokens["input_ids"].to(device)
                 text_embeddings = self.thinker.token_embedding(token_ids)
             elif isinstance(text_tokens, torch.Tensor):
                 if text_tokens.dtype in (torch.long, torch.int32, torch.int64):

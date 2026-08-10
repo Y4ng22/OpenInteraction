@@ -56,6 +56,7 @@ def __getattr__(name):
         "BackgroundModel": "interactformer.background.background_model",
         "Orchestrator": "interactformer.orchestrator.orchestrator",
         "StreamingContextBridge": "interactformer.bridge.cross_attention",
+        "MiniCPMORealtimeClient": "interactformer.backends.minicpmo_realtime",
     }
     if name in _imports:
         import importlib
@@ -68,4 +69,5 @@ __all__ = [
     "BackgroundModel",
     "Orchestrator",
     "StreamingContextBridge",
+    "MiniCPMORealtimeClient",
 ]

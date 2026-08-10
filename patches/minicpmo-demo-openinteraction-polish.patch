@@ -1,0 +1,32 @@
+diff --git a/static/duplex/ui/duplex-ui.js b/static/duplex/ui/duplex-ui.js
+--- a/static/duplex/ui/duplex-ui.js
++++ b/static/duplex/ui/duplex-ui.js
+@@ -378,9 +378,11 @@ export function initHealthCheck(badgeId) {
+         try {
+             const resp = await fetch('/status');
+             const data = await resp.json();
+-            statusEl.textContent = `Workers: ${data.idle_workers}/${data.total_workers}`;
++            statusEl.textContent = document.body?.dataset.brand === 'openinteraction'
++                ? (data.idle_workers > 0 ? '系统就绪' : '系统繁忙')
++                : `Workers: ${data.idle_workers}/${data.total_workers}`;
+             statusEl.className = 'status-badge' + (data.idle_workers > 0 ? ' online' : '');
+         } catch {
+-            statusEl.textContent = 'Offline';
++            statusEl.textContent = document.body?.dataset.brand === 'openinteraction' ? '连接中断' : 'Offline';
+             statusEl.className = 'status-badge';
+         }
+diff --git a/static/omni/omni-app.js b/static/omni/omni-app.js
+--- a/static/omni/omni-app.js
++++ b/static/omni/omni-app.js
+@@ -240,7 +240,10 @@ const _omniPreset = new PresetSelector({
+             settingsPersistence.save();
+         }
+         if (audioLoaded && preset && preset.ref_audio && preset.ref_audio.data) {
+-            refAudio.setAudio(preset.ref_audio.data, preset.ref_audio.name, preset.ref_audio.duration);
++            const displayName = /minicpm/i.test(preset.ref_audio.name || '')
++                ? 'openinteraction_voice_zh.wav'
++                : preset.ref_audio.name;
++            refAudio.setAudio(preset.ref_audio.data, displayName, preset.ref_audio.duration);
+         }
+     },
+     storageKey: 'omni_preset',

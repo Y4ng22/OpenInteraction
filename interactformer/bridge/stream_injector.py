@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from collections import deque
 import time
+import threading
 
 
 class InjectionStrategy(Enum):
@@ -99,6 +100,7 @@ class InjectionScheduler:
 
         # Global injection queue (ordered by priority + timestamp)
         self._global_queue: List[BridgeMessage] = []
+        self._lock = threading.RLock()
 
     def enqueue(self, message: BridgeMessage) -> None:
         """Add a message to the injection queue.
@@ -106,17 +108,36 @@ class InjectionScheduler:
         Args:
             message: The bridge message to enqueue.
         """
-        # Add to stream-specific queue
-        stream_id = message.stream_id or "default"
-        if stream_id not in self._streams:
-            self._streams[stream_id] = deque(maxlen=self.max_queued_chunks)
-        self._streams[stream_id].append(message)
+        with self._lock:
+            stream_id = message.stream_id or "default"
+            if message.expires_at_ms is None:
+                message.expires_at_ms = message.created_at_ms + self.chunk_timeout_ms
+            if stream_id not in self._streams:
+                self._streams[stream_id] = deque()
 
-        # Add to global queue (sorted by priority then timestamp)
-        self._global_queue.append(message)
-        self._global_queue.sort(
-            key=lambda m: (m.priority.value, -m.created_at_ms)
-        )
+            # Keep both indexes bounded.  The old deque(maxlen=...) silently
+            # evicted from the per-stream view while leaving the same message
+            # in the global list, so sustained S2 traffic grew memory forever.
+            if len(self._streams[stream_id]) >= self.max_queued_chunks:
+                evicted = self._streams[stream_id].popleft()
+                self._global_queue = [m for m in self._global_queue if m is not evicted]
+
+            self._streams[stream_id].append(message)
+            self._global_queue.append(message)
+            self._global_queue.sort(
+                key=lambda m: (m.priority.value, m.created_at_ms, m.chunk_index)
+            )
+
+            while len(self._global_queue) > self.max_queued_chunks:
+                evicted = self._global_queue.pop()
+                evicted_stream = evicted.stream_id or "default"
+                stream_queue = self._streams.get(evicted_stream)
+                if stream_queue is not None:
+                    self._streams[evicted_stream] = deque(
+                        m for m in stream_queue if m is not evicted
+                    )
+                    if not self._streams[evicted_stream]:
+                        del self._streams[evicted_stream]
 
     def get_next_injection(
         self,
@@ -137,43 +158,31 @@ class InjectionScheduler:
         Returns:
             The next message to inject, or None.
         """
-        # Clean expired messages
-        self._clean_expired()
+        with self._lock:
+            self._clean_expired_locked()
+            if not self._global_queue:
+                return None
 
-        if not self._global_queue:
-            return None
-
-        if self.strategy == InjectionStrategy.EAGER:
-            return self._global_queue.pop(0)
-
-        elif self.strategy == InjectionStrategy.SCHEDULED:
-            # Only inject at turn boundaries (when model is NOT speaking)
-            if not is_model_speaking and self._global_queue:
-                return self._global_queue.pop(0)
-            return None
-
-        elif self.strategy == InjectionStrategy.ADAPTIVE:
-            # Adaptive: inject critical immediately, others at boundaries
             for i, msg in enumerate(self._global_queue):
-                if msg.priority == InjectionPriority.CRITICAL:
-                    return self._global_queue.pop(i)
+                stream_id = msg.stream_id or "default"
+                stream_queue = self._streams.get(stream_id)
+                # Never deliver a high-priority final chunk ahead of earlier
+                # chunks in the same stream.
+                if stream_queue and stream_queue[0] is not msg:
+                    continue
 
-                if (
-                    msg.priority == InjectionPriority.HIGH
-                    and not is_model_speaking
-                ):
-                    return self._global_queue.pop(i)
+                eligible = self.strategy == InjectionStrategy.EAGER
+                if self.strategy == InjectionStrategy.SCHEDULED:
+                    eligible = not is_model_speaking
+                elif self.strategy == InjectionStrategy.ADAPTIVE:
+                    eligible = (
+                        msg.priority == InjectionPriority.CRITICAL
+                        or not is_model_speaking
+                    )
 
-                if (
-                    msg.priority in (InjectionPriority.NORMAL, InjectionPriority.LOW)
-                    and not is_model_speaking
-                    and msg.chunk_index > 0  # Wait for at least 1 chunk buffered
-                ):
-                    return self._global_queue.pop(i)
-
+                if eligible:
+                    return self._pop_at_locked(i)
             return None
-
-        return None
 
     def cancel_stream(self, stream_id: str) -> int:
         """Cancel all pending messages from a stream.
@@ -187,34 +196,24 @@ class InjectionScheduler:
         Returns:
             Number of messages cancelled.
         """
-        cancelled = 0
-
-        # Remove from stream queue
-        if stream_id in self._streams:
-            cancelled += len(self._streams[stream_id])
-            del self._streams[stream_id]
-
-        # Remove from global queue
-        self._global_queue = [
-            m for m in self._global_queue
-            if m.stream_id != stream_id
-        ]
-        cancelled += sum(
-            1 for m in self._global_queue
-            if m.stream_id == stream_id
-        )
-
-        return cancelled
+        with self._lock:
+            cancelled = sum(1 for m in self._global_queue if m.stream_id == stream_id)
+            self._streams.pop(stream_id, None)
+            self._global_queue = [m for m in self._global_queue if m.stream_id != stream_id]
+            return cancelled
 
     def _clean_expired(self) -> None:
         """Remove expired messages from all queues."""
+        with self._lock:
+            self._clean_expired_locked()
+
+    def _clean_expired_locked(self) -> None:
         now = time.time() * 1000
 
         for stream_id in list(self._streams.keys()):
             self._streams[stream_id] = deque(
                 [m for m in self._streams[stream_id]
                  if m.expires_at_ms is None or m.expires_at_ms > now],
-                maxlen=self.max_queued_chunks,
             )
             if not self._streams[stream_id]:
                 del self._streams[stream_id]
@@ -224,15 +223,27 @@ class InjectionScheduler:
             if m.expires_at_ms is None or m.expires_at_ms > now
         ]
 
+    def _pop_at_locked(self, index: int) -> BridgeMessage:
+        message = self._global_queue.pop(index)
+        stream_id = message.stream_id or "default"
+        stream_queue = self._streams.get(stream_id)
+        if stream_queue is not None:
+            self._streams[stream_id] = deque(m for m in stream_queue if m is not message)
+            if not self._streams[stream_id]:
+                del self._streams[stream_id]
+        return message
+
     @property
     def pending_count(self) -> int:
         """Number of pending messages across all streams."""
-        return len(self._global_queue)
+        with self._lock:
+            return len(self._global_queue)
 
     @property
     def active_streams(self) -> List[str]:
         """List of active stream IDs."""
-        return list(self._streams.keys())
+        with self._lock:
+            return list(self._streams.keys())
 
 
 class StreamInjector:
@@ -261,6 +272,9 @@ class StreamInjector:
 
         # Active injection streams
         self._active_injections: Dict[str, List[BridgeMessage]] = {}
+        self._seen_message_ids: Dict[str, set[str]] = {}
+        self._next_chunk_index: Dict[str, int] = {}
+        self._lock = threading.RLock()
 
         # Statistics
         self._total_injected: int = 0
@@ -286,10 +300,26 @@ class StreamInjector:
         if stream_id is None:
             stream_id = result.task_id
 
-        # Chunk the result into bridge messages
-        messages = self._chunk_result(result, stream_id, priority)
-        for msg in messages:
-            self.scheduler.enqueue(msg)
+        with self._lock:
+            if (
+                stream_id not in self._seen_message_ids
+                and len(self._seen_message_ids) >= self.max_concurrent_streams
+            ):
+                raise RuntimeError("Maximum concurrent bridge streams reached")
+
+            seen = self._seen_message_ids.setdefault(stream_id, set())
+            next_index = self._next_chunk_index.get(stream_id, 0)
+
+            # Final results repeat reasoning/retrieval items already sent as
+            # partials.  Stable message IDs let us suppress those duplicates.
+            for msg in self._chunk_result(result, stream_id, priority):
+                if msg.message_id in seen:
+                    continue
+                seen.add(msg.message_id)
+                msg.chunk_index = next_index
+                next_index += 1
+                self.scheduler.enqueue(msg)
+            self._next_chunk_index[stream_id] = next_index
 
     def get_context_for_cell(
         self,
@@ -327,6 +357,10 @@ class StreamInjector:
                 if msg.stream_id not in self._active_injections:
                     self._active_injections[msg.stream_id] = []
                 self._active_injections[msg.stream_id].append(msg)
+                if msg.is_final:
+                    self._active_injections.pop(msg.stream_id, None)
+                    self._seen_message_ids.pop(msg.stream_id, None)
+                    self._next_chunk_index.pop(msg.stream_id, None)
 
         return injections if injections else None
 
@@ -344,9 +378,14 @@ class StreamInjector:
             Number of cancelled messages.
         """
         total = 0
-        for stream_id in list(self._active_injections.keys()):
+        stream_ids = set(self.scheduler.active_streams)
+        stream_ids.update(self._active_injections.keys())
+        stream_ids.update(self._seen_message_ids.keys())
+        for stream_id in stream_ids:
             total += self.scheduler.cancel_stream(stream_id)
-            del self._active_injections[stream_id]
+            self._active_injections.pop(stream_id, None)
+            self._seen_message_ids.pop(stream_id, None)
+            self._next_chunk_index.pop(stream_id, None)
 
         self._total_cancelled += total
         return total
@@ -429,13 +468,28 @@ class StreamInjector:
             ))
             chunk_index += 1
 
+        # A final answer must be its own message.  Previously, error-only and
+        # answer-only BackgroundResults produced zero messages and vanished;
+        # attaching the answer to a repeated reasoning chunk also caused it to
+        # disappear during partial-result de-duplication.
+        if result.final_answer and not result.partial:
+            messages.append(BridgeMessage(
+                message_id=f"{stream_id}_final",
+                direction="s2_to_s1",
+                content={
+                    "type": "final_answer",
+                    "data": result.final_answer,
+                    "confidence": result.confidence,
+                },
+                stream_id=stream_id,
+                chunk_index=chunk_index,
+                priority=InjectionPriority.HIGH,
+            ))
+            chunk_index += 1
+
         # Mark the last message as final
-        if messages:
+        if messages and not result.partial:
             messages[-1].is_final = True
-            messages[-1].content["final_answer"] = (
-                result.final_answer or "Reasoning complete."
-            )
-            messages[-1].content["confidence"] = result.confidence
 
         return messages
 
@@ -447,5 +501,5 @@ class StreamInjector:
             "total_cancelled": self._total_cancelled,
             "total_expired": self._total_expired,
             "pending": self.scheduler.pending_count,
-            "active_streams": len(self._active_injections),
+            "active_streams": len(self.scheduler.active_streams),
         }

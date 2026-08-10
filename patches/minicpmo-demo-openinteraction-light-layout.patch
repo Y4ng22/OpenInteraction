@@ -1,0 +1,52 @@
+diff --git a/static/omni/omni.html b/static/omni/omni.html
+--- a/static/omni/omni.html
++++ b/static/omni/omni.html
+@@ -3,7 +3,7 @@
+ <head>
+     <meta charset="UTF-8">
+     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+-    <meta name="theme-color" content="#0b1220">
++    <meta name="theme-color" content="#f7f6f2">
+     <meta name="description" content="OpenInteraction realtime multimodal assistant">
+     <title>OpenInteraction · 实时多模态交互</title>
+     <link rel="stylesheet" href="/static/duplex/duplex-shared.css">
+@@ -17,10 +17,10 @@
+     <div class="header-left">
+         <a class="oi-brand" href="/omni" aria-label="OpenInteraction">
+             <span class="oi-brand-symbol">OI</span>
+-            <span class="oi-brand-copy"><strong>OpenInteraction</strong><small>REALTIME MULTIMODAL</small></span>
++            <span class="oi-brand-copy"><strong>OpenInteraction</strong><small>INTERACTION MODEL / PREVIEW</small></span>
+         </a>
+         <div class="nav-links">
+-            <a href="/omni" class="active">交互空间</a>
++            <a href="/omni" class="active">Live system</a>
+         </div>
+     </div>
+     <div class="header-right">
+@@ -30,6 +30,26 @@
+     </div>
+ </div>
+ 
++<!-- ========== OpenInteraction Editorial Intro ========== -->
++<section class="oi-intro" aria-labelledby="oiIntroTitle">
++    <div class="oi-intro-rail">
++        <span>OPENINTERACTION</span>
++        <span>EXPERIMENT 01</span>
++    </div>
++    <div class="oi-intro-copy">
++        <p class="oi-intro-kicker">TIME-ALIGNED MULTIMODAL ASSISTANT</p>
++        <h1 id="oiIntroTitle">交互，不必等待<br>回合结束。</h1>
++    </div>
++    <div class="oi-intro-note">
++        <p>让视频、声音与模型回应保持在同一条时间线上。它持续感知，也允许你随时打断。</p>
++        <div class="oi-stream-key" aria-label="Input and output streams">
++            <span><i class="oi-key-video"></i>视频</span>
++            <span><i class="oi-key-audio"></i>声音</span>
++            <span><i class="oi-key-model"></i>模型</span>
++        </div>
++    </div>
++</section>
++
+ <!-- ========== Notice Banner ========== -->
+ <!-- <div class="notice-banner" id="noticeBanner">
+     <span class="notice-icon">&#x1F3A7;</span>

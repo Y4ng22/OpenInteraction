@@ -1,0 +1,507 @@
+:root {
+    --oi-paper: #f7f6f2;
+    --oi-white: #ffffff;
+    --oi-card: #f1f1ef;
+    --oi-ink: #161616;
+    --oi-muted: #65645f;
+    --oi-line: #d8d7d1;
+    --oi-blue: #82c8e8;
+    --oi-blue-soft: #dff2fa;
+    --oi-lime: #c8e87d;
+    --oi-lime-soft: #edf7cf;
+    --oi-coral: #ee684a;
+    --oi-yellow: #f6d87a;
+    --oi-serif: Georgia, "Noto Serif SC", "Songti SC", "STSong", serif;
+    --oi-sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Noto Sans SC", sans-serif;
+}
+
+html { background: var(--oi-paper); }
+
+body[data-brand="openinteraction"] {
+    color: var(--oi-ink);
+    background: var(--oi-paper);
+    font-family: var(--oi-sans);
+}
+
+body[data-brand="openinteraction"]::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background-image: linear-gradient(to right, rgba(22, 22, 22, 0.035) 1px, transparent 1px);
+    background-size: 80px 100%;
+    opacity: 0.42;
+}
+
+/* Editorial header */
+body[data-brand="openinteraction"] .header {
+    min-height: 58px;
+    padding: 0 28px;
+    color: var(--oi-ink);
+    border: 0;
+    border-bottom: 1px solid var(--oi-ink);
+    background: var(--oi-paper);
+    box-shadow: none;
+}
+
+.oi-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    color: var(--oi-ink);
+    text-decoration: none;
+}
+
+.oi-brand-symbol {
+    width: 31px;
+    height: 31px;
+    display: grid;
+    place-items: center;
+    color: var(--oi-paper);
+    background: var(--oi-ink);
+    border-radius: 50%;
+    font: 700 9px/1 var(--oi-sans);
+    letter-spacing: -0.4px;
+}
+
+.oi-brand-copy {
+    display: flex;
+    flex-direction: column;
+    line-height: 1;
+}
+
+.oi-brand-copy strong {
+    color: var(--oi-ink);
+    font: 600 16px/1 var(--oi-serif);
+    letter-spacing: -0.2px;
+}
+
+.oi-brand-copy small {
+    margin-top: 5px;
+    color: var(--oi-muted);
+    font-size: 7px;
+    font-weight: 650;
+    letter-spacing: 1.45px;
+}
+
+body[data-brand="openinteraction"] .header-left { gap: 32px; }
+
+body[data-brand="openinteraction"] .header .nav-links a {
+    padding: 3px 0;
+    color: var(--oi-muted);
+    border-radius: 0;
+    background: transparent;
+    font-size: 12px;
+}
+
+body[data-brand="openinteraction"] .header .nav-links a:hover,
+body[data-brand="openinteraction"] .header .nav-links a.active {
+    color: var(--oi-ink);
+    background: transparent;
+    box-shadow: inset 0 -1px 0 var(--oi-ink);
+}
+
+body[data-brand="openinteraction"] .header-reset-btn {
+    padding: 5px 9px;
+    color: var(--oi-muted);
+    border: 0;
+    border-radius: 0;
+    background: transparent;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+body[data-brand="openinteraction"] .header-reset-btn:hover {
+    color: var(--oi-coral);
+    border: 0;
+    background: transparent;
+}
+
+body[data-brand="openinteraction"] .header .status-badge {
+    padding: 5px 10px;
+    color: var(--oi-muted);
+    border: 1px solid var(--oi-line);
+    border-radius: 999px;
+    background: var(--oi-white);
+}
+
+body[data-brand="openinteraction"] .header .status-badge.online {
+    color: var(--oi-ink);
+    border-color: #9dbb55;
+    background: var(--oi-lime-soft);
+    box-shadow: none;
+}
+
+body[data-brand="openinteraction"] .header .status-badge.online::before {
+    content: "";
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin-right: 6px;
+    border-radius: 50%;
+    background: #6b8d2f;
+    vertical-align: 1px;
+}
+
+/* Workspace geometry */
+body[data-brand="openinteraction"] .main {
+    width: min(1520px, calc(100% - 56px));
+    max-width: none;
+    min-height: 690px;
+    height: calc(100vh - 104px);
+    margin: 18px auto 28px;
+    grid-template-columns: minmax(490px, 1.12fr) minmax(430px, 0.88fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    gap: 14px;
+}
+
+body[data-brand="openinteraction"] .col-left,
+body[data-brand="openinteraction"] .col-right { gap: 10px; }
+
+body[data-brand="openinteraction"] .col-left {
+    display: grid;
+    grid-template-rows: minmax(0, 1fr) 40px 270px;
+    overflow: hidden;
+}
+
+body[data-brand="openinteraction"] .col-left .row-top {
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(240px, 1fr) minmax(48px, auto);
+    gap: 0;
+    min-height: 0;
+    padding: 0;
+    overflow: hidden;
+    border: 1px solid var(--oi-line);
+    border-radius: 10px;
+    background: var(--oi-card);
+}
+
+body[data-brand="openinteraction"] .col-left .row-top .panel-media {
+    width: 100%;
+    min-width: 0;
+    border: 0;
+    border-bottom: 1px solid var(--oi-line);
+    border-radius: 0;
+    background: #111;
+}
+
+body[data-brand="openinteraction"] .col-left .row-top .panel-mode {
+    min-width: 0;
+    min-height: 48px;
+    max-height: 190px;
+    padding: 10px 12px;
+    overflow: auto;
+    border: 0;
+    background: var(--oi-card);
+}
+
+body[data-brand="openinteraction"] .panel-mode > .fo-row:first-child {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+body[data-brand="openinteraction"] .mode-selector {
+    padding: 2px;
+    border: 1px solid var(--oi-line);
+    border-radius: 5px;
+    background: var(--oi-white);
+}
+
+body[data-brand="openinteraction"] .mode-btn {
+    border-radius: 3px;
+    color: var(--oi-muted);
+}
+
+body[data-brand="openinteraction"] .mode-btn.active {
+    color: var(--oi-ink);
+    border: 0;
+    background: var(--oi-blue-soft);
+    box-shadow: none;
+}
+
+body[data-brand="openinteraction"] .video-container { border-radius: 0; background: #111; }
+body[data-brand="openinteraction"] .video-container video { object-fit: cover; }
+
+body[data-brand="openinteraction"] .status-lamp {
+    border: 1px solid rgba(255, 255, 255, 0.35);
+    border-radius: 999px;
+    background: rgba(15, 15, 15, 0.76);
+    backdrop-filter: blur(5px);
+}
+
+body[data-brand="openinteraction"] .status-lamp .dot {
+    background: var(--oi-coral);
+    box-shadow: 0 0 0 3px rgba(238, 104, 74, 0.18);
+}
+
+body[data-brand="openinteraction"] .omni-waveform-bar {
+    height: 40px;
+    border: 1px solid var(--oi-line);
+    border-radius: 7px;
+    background: var(--oi-blue-soft);
+}
+
+body[data-brand="openinteraction"] .omni-waveform-placeholder { color: #527383; }
+
+body[data-brand="openinteraction"] .col-left .row-bottom {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(170px, 0.8fr);
+    gap: 10px;
+    height: 270px;
+    overflow: hidden;
+    min-height: 0;
+}
+
+body[data-brand="openinteraction"] .col-left .row-bottom .panel-config,
+body[data-brand="openinteraction"] .col-left .row-bottom .panel-status { overflow: auto; }
+
+/* Flat research cards */
+body[data-brand="openinteraction"] .panel-config,
+body[data-brand="openinteraction"] .panel-status,
+body[data-brand="openinteraction"] .panel-sysconfig,
+body[data-brand="openinteraction"] .panel-dialog,
+body[data-brand="openinteraction"] .panel-controls {
+    color: var(--oi-ink);
+    border: 1px solid var(--oi-line);
+    border-radius: 10px;
+    background: var(--oi-white);
+    box-shadow: none;
+}
+
+body[data-brand="openinteraction"] .panel-config,
+body[data-brand="openinteraction"] .panel-status { padding: 13px 14px; }
+
+body[data-brand="openinteraction"] .panel-status { background: var(--oi-lime-soft); }
+
+body[data-brand="openinteraction"] .panel-sysconfig {
+    position: relative;
+    padding: 40px 16px 13px;
+    overflow: auto;
+    background: var(--oi-card);
+}
+
+body[data-brand="openinteraction"] .panel-sysconfig::before {
+    content: "BEHAVIOR / 01";
+    position: absolute;
+    top: 0;
+    right: 0;
+    left: 0;
+    margin: 0;
+    padding: 10px 15px;
+    color: var(--oi-muted);
+    border-bottom: 1px solid var(--oi-line);
+    background: transparent;
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: 1.2px;
+}
+
+body[data-brand="openinteraction"] .panel-dialog { background: var(--oi-white); }
+
+body[data-brand="openinteraction"] .conv-header {
+    padding: 11px 15px;
+    color: var(--oi-ink);
+    border-bottom: 1px solid var(--oi-line);
+    background: var(--oi-white);
+    font: 600 16px/1.2 var(--oi-serif);
+}
+
+body[data-brand="openinteraction"] .conv-header::after {
+    content: "TIME-ALIGNED LOG";
+    margin-left: auto;
+    color: var(--oi-muted);
+    font: 700 8px/1 var(--oi-sans);
+    letter-spacing: 1.2px;
+}
+
+body[data-brand="openinteraction"] .conv-log {
+    gap: 0;
+    padding: 4px 16px 16px;
+}
+
+body[data-brand="openinteraction"] .conv-entry {
+    padding: 11px 0;
+    border-bottom: 1px solid #ecebe6;
+}
+
+body[data-brand="openinteraction"] .conv-entry .conv-icon {
+    border-radius: 50%;
+    background: var(--oi-card);
+}
+
+body[data-brand="openinteraction"] .conv-entry.ai .conv-icon,
+body[data-brand="openinteraction"] .conv-entry.speak .conv-icon {
+    color: #65832b;
+    background: var(--oi-lime-soft);
+}
+
+body[data-brand="openinteraction"] .conv-entry.user .conv-icon {
+    color: #377a98;
+    background: var(--oi-blue-soft);
+}
+
+body[data-brand="openinteraction"] .conv-entry .speaker.ai { color: #607d29; }
+body[data-brand="openinteraction"] .conv-entry .speaker.user-tag { color: #397d9b; }
+body[data-brand="openinteraction"] .conv-empty { color: #999791; font-family: var(--oi-serif); }
+
+/* Form language */
+body[data-brand="openinteraction"] .config-group { border-bottom-color: var(--oi-line); }
+body[data-brand="openinteraction"] .config-group summary { color: #484742; }
+
+body[data-brand="openinteraction"] .config-group .cg-input,
+body[data-brand="openinteraction"] .cg-select {
+    color: var(--oi-ink);
+    border-color: var(--oi-line);
+    border-radius: 4px;
+    background: var(--oi-white);
+}
+
+body[data-brand="openinteraction"] .config-group .cg-input-sm {
+    color: var(--oi-ink);
+    border-color: var(--oi-ink);
+    border-radius: 4px;
+    background: var(--oi-white);
+}
+
+body[data-brand="openinteraction"] .preset-btn {
+    border-radius: 999px;
+    background: var(--oi-white);
+}
+
+body[data-brand="openinteraction"] .preset-btn.active {
+    color: var(--oi-ink);
+    border-color: #8ea94e;
+    background: var(--oi-lime);
+    box-shadow: none;
+}
+
+/* Bottom transport controls */
+body[data-brand="openinteraction"] .panel-controls {
+    justify-content: flex-end;
+    padding: 10px 12px;
+    border-color: var(--oi-ink);
+    border-radius: 8px;
+}
+
+body[data-brand="openinteraction"] .panel-controls::before {
+    content: "SESSION CONTROLS";
+    margin-right: auto;
+    padding-left: 5px;
+    color: var(--oi-muted);
+    font-size: 9px;
+    font-weight: 750;
+    letter-spacing: 1.3px;
+}
+
+body[data-brand="openinteraction"] .ctrl-btn {
+    min-width: 92px;
+    padding: 9px 16px;
+    color: var(--oi-ink);
+    border-color: var(--oi-line);
+    border-radius: 5px;
+    background: var(--oi-white);
+    font-size: 13px;
+    box-shadow: none;
+}
+
+body[data-brand="openinteraction"] .ctrl-btn:hover { background: var(--oi-card); }
+
+body[data-brand="openinteraction"] .ctrl-btn.primary {
+    color: #fff;
+    border-color: var(--oi-ink);
+    background: var(--oi-ink);
+    box-shadow: none;
+}
+
+body[data-brand="openinteraction"] .ctrl-btn.primary:hover { background: #373737; }
+
+body[data-brand="openinteraction"] .ctrl-btn.danger {
+    color: #a33c29;
+    border-color: #d9a79d;
+    background: #fff7f5;
+}
+
+body[data-brand="openinteraction"] .ctrl-btn.live,
+body[data-brand="openinteraction"] .ctrl-btn.live:disabled {
+    color: var(--oi-ink);
+    border-color: #8ca54d;
+    background: var(--oi-lime);
+}
+
+body[data-brand="openinteraction"] .ctrl-btn.force-listen-active {
+    color: var(--oi-ink);
+    border-color: #d1ad4c;
+    background: var(--oi-yellow);
+}
+
+/* FAQ is part of the same editorial system */
+body[data-brand="openinteraction"] .faq-sidebar,
+body[data-brand="openinteraction"] .faq-sidebar-inner { background: var(--oi-paper); }
+
+body[data-brand="openinteraction"] .faq-sidebar { border-left-color: var(--oi-ink); }
+
+body[data-brand="openinteraction"] .faq-header {
+    color: var(--oi-ink);
+    border-bottom: 1px solid var(--oi-ink);
+    background: var(--oi-yellow);
+}
+
+body[data-brand="openinteraction"] .faq-item,
+body[data-brand="openinteraction"] .faq-question {
+    border-color: var(--oi-line);
+    border-radius: 5px;
+    background: var(--oi-white);
+    box-shadow: none;
+}
+
+body[data-brand="openinteraction"] .faq-collapse-strip { background: var(--oi-paper); }
+body[data-brand="openinteraction"] #save-share-container button { border-radius: 4px !important; }
+
+@media (max-width: 1180px) {
+    body[data-brand="openinteraction"] .main {
+        grid-template-columns: minmax(430px, 1fr) minmax(390px, 0.9fr);
+    }
+}
+
+@media (max-width: 1024px) {
+    body[data-brand="openinteraction"] .main {
+        width: calc(100% - 32px);
+        height: auto;
+        min-height: 0;
+        grid-template-columns: 1fr;
+        padding-bottom: 84px;
+    }
+
+    body[data-brand="openinteraction"] .col-left {
+        display: flex;
+        overflow: visible;
+    }
+
+    body[data-brand="openinteraction"] .col-left .row-top { min-height: 520px; }
+    body[data-brand="openinteraction"] .col-left .row-bottom { height: auto; overflow: visible; }
+
+    body[data-brand="openinteraction"] .panel-controls {
+        border-radius: 0;
+        border-right: 0;
+        border-bottom: 0;
+        border-left: 0;
+        box-shadow: 0 -8px 24px rgba(22, 22, 22, 0.08);
+    }
+}
+
+@media (max-width: 680px) {
+    body[data-brand="openinteraction"] .header { min-height: 54px; padding: 0 14px; }
+    body[data-brand="openinteraction"] .header-left { gap: 8px; }
+    body[data-brand="openinteraction"] .header .nav-links { display: none; }
+    body[data-brand="openinteraction"] .header-reset-btn { display: none; }
+    .oi-brand-copy small { display: none; }
+
+    body[data-brand="openinteraction"] .main { width: calc(100% - 24px); margin-top: 12px; }
+    body[data-brand="openinteraction"] .col-left .row-top { min-height: 390px; grid-template-rows: minmax(250px, 1fr) minmax(48px, auto); }
+    body[data-brand="openinteraction"] .col-left .row-bottom { grid-template-columns: 1fr; }
+    body[data-brand="openinteraction"] .panel-controls::before { display: none; }
+    body[data-brand="openinteraction"] .ctrl-btn { min-width: 76px; padding: 8px 11px; }
+}

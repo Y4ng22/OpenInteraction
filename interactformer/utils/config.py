@@ -68,7 +68,7 @@ class BackgroundModelConfig:
         stream_chunk_size: Size of streaming chunks for progressive injection.
     """
     model_type: Literal["transformer", "llm"] = "llm"
-    model_name_or_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
+    model_name_or_path: str = "doubao-seed-evolving"
     max_context_length: int = 32768
     ensemble_mode: Literal["parallel", "cascade", "voting"] = "parallel"
     reasoning_depth: Literal["shallow", "deep", "adaptive"] = "adaptive"

@@ -18,6 +18,7 @@ Architecture:
 """
 
 from typing import Optional, Tuple, Generator
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -232,6 +233,7 @@ class StreamingTalker(nn.Module):
         sample_rate: int = 24000,
         frame_rate: float = 12.5,
         num_mtp_heads: int = 4,
+        chunk_duration_ms: int = 200,
     ):
         super().__init__()
         self.d_model = d_model
@@ -239,6 +241,7 @@ class StreamingTalker(nn.Module):
         self.sample_rate = sample_rate
         self.frame_rate = frame_rate
         self.samples_per_frame = int(sample_rate / frame_rate)
+        self.samples_per_chunk = int(sample_rate * chunk_duration_ms / 1000)
 
         # Hidden state → codec projection
         self.state_to_codec = nn.Sequential(
@@ -266,6 +269,7 @@ class StreamingTalker(nn.Module):
 
         # Interruption state
         self._interrupted: bool = False
+        self._pending_waveform: Optional[torch.Tensor] = None
 
     def forward(
         self,
@@ -285,10 +289,13 @@ class StreamingTalker(nn.Module):
         if is_interrupted:
             self._interrupted = True
             return (
-                torch.zeros(hidden_states.size(0), self.samples_per_frame,
+                torch.zeros(hidden_states.size(0), self.samples_per_chunk,
                            device=hidden_states.device),
                 [],
             )
+        # Interruption stops the current micro-turn, not the entire session.
+        # A later speak decision must be able to resume generation.
+        self._interrupted = False
 
         # Take the last hidden state for codec prediction
         if hidden_states.dim() == 3:
@@ -312,8 +319,28 @@ class StreamingTalker(nn.Module):
 
         all_tokens = [primary_token] + residual_tokens
 
-        # Render to waveform
-        waveform = self.renderer(all_tokens, streaming=not self._interrupted)
+        # The codec runs at 12.5 Hz (80ms) while the interaction grid runs at
+        # 200ms.  Render 3/2 frames alternately and carry the remainder so every
+        # API call returns exactly one grid cell (4800 samples at 24kHz).
+        pending = self._pending_waveform
+        pending_samples = 0 if pending is None else pending.size(-1)
+        frames_needed = max(
+            1,
+            math.ceil(
+                (self.samples_per_chunk - pending_samples) /
+                self.samples_per_frame
+            ),
+        )
+        frames = [
+            self.renderer(all_tokens, streaming=not self._interrupted)
+            for _ in range(frames_needed)
+        ]
+        waveform = torch.cat(
+            ([pending] if pending is not None else []) + frames,
+            dim=-1,
+        )
+        self._pending_waveform = waveform[:, self.samples_per_chunk:].detach()
+        waveform = waveform[:, :self.samples_per_chunk]
 
         return waveform, all_tokens
 
@@ -349,4 +376,5 @@ class StreamingTalker(nn.Module):
     def reset(self) -> None:
         """Reset state for a new utterance."""
         self._interrupted = False
+        self._pending_waveform = None
         self.renderer.reset_stream()

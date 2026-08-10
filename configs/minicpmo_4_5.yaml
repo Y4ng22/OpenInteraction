@@ -1,0 +1,41 @@
+backend:
+  type: minicpmo_realtime
+  model: openbmb/MiniCPM-o-4_5
+  gateway_url: http://127.0.0.1:8006
+  mode: video                       # video=omni full duplex; audio=audio duplex
+  system_prompt: 你是一个自然、简洁、可靠的全双工多模态助手。
+  verify_tls: true
+  bearer_token_env: MINICPMO_API_TOKEN
+
+streaming:
+  local_micro_turn_ms: 200          # InteractFormer scheduler / S2 cadence
+  upstream_chunk_ms: 1000           # MiniCPM-o official TDM inference unit
+  input_sample_rate: 16000
+  output_sample_rate: 24000
+  capture_sample_rate: 24000        # adapter resamples 24k capture to 16k input
+  playback_delay_ms: 200
+  max_message_bytes: 16777216
+  max_slice_nums: 1
+
+deployment:
+  official_demo_repo: https://github.com/OpenBMB/MiniCPM-o-Demo.git
+  official_demo_ref: main           # pin a tested commit before production
+  model_revision: main              # pin a tested HF commit before production
+  runtime: official_pytorch_compose
+  torch_compile: true               # recommended for 4090/A100 after first boot
+  attention: sdpa                   # official default; FlashAttention is optional
+  workers_per_gpu: 1
+  public_gateway_port: 8006
+  expose_worker_ports: false
+
+environment:
+  os: linux
+  python_worker_image: python:3.12-slim-bookworm
+  torch: 2.8.0
+  torchaudio: 2.8.0
+  cuda_wheel: cu128
+  recommended_driver: "570+"
+  minimum_free_disk_gb: 80
+  minimum_system_ram_gb: 32
+  stable_gpu_vram_gb: 32
+  recommended_rental_gpu: L40S-48GB
