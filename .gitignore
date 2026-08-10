@@ -43,6 +43,13 @@ docs/GETTING_STARTED.md
 # Virtualenv
 venv*/
 .venv/
+.codex-tools/
+.tmp/
+
+# Local credentials
+.env
+.env.*
+!.env.example
 
 # OS
 .DS_Store

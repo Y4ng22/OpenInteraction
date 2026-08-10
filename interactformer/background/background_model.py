@@ -36,7 +36,8 @@ import queue
 from concurrent.futures import ThreadPoolExecutor
 
 from interactformer.background.reasoner import (
-    Reasoner, ReasoningStep, ReasoningDepth,
+    Reasoner, ReasoningBackend, ReasoningStep, ReasoningDepth,
+    reasoning_backend_from_env,
 )
 from interactformer.background.retriever import (
     Retriever, RetrievalResponse, RetrievalResult,
@@ -137,18 +138,23 @@ class BackgroundModel:
 
     def __init__(
         self,
-        model_name_or_path: str = "Qwen/Qwen3-Omni-30B-A3B-Instruct",
+        model_name_or_path: str = "doubao-seed-evolving",
         enable_retrieval: bool = True,
         enable_tools: bool = True,
         max_concurrent_tasks: int = 3,
         max_pending_tasks: int = 64,
         result_stream_buffer: int = 100,
+        reasoning_backend: Optional[ReasoningBackend] = None,
     ):
         self.model_name_or_path = model_name_or_path
         self.max_concurrent_tasks = max_concurrent_tasks
 
         # Ensemble components
-        self.reasoner = Reasoner()
+        self.reasoner = Reasoner(
+            backend=reasoning_backend or reasoning_backend_from_env(
+                fallback_model=model_name_or_path,
+            )
+        )
         self.retriever = Retriever() if enable_retrieval else None
         self.tool_executor = ToolExecutor() if enable_tools else None
 

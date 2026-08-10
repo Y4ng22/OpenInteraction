@@ -155,3 +155,24 @@ but not internal hidden-state slots. InteractFormer therefore keeps S2 task
 routing outside the model. Mid-session S2 hidden-state injection requires an
 official-backend extension or a trained student; the existing custom Bridge
 remains the research/distillation path.
+
+### Configure Doubao as the external S2 reasoner
+
+Copy `.env.example` to `.env` and fill `ANTHROPIC_AUTH_TOKEN`. The file is
+ignored by Git and must never be committed. The default Anthropic-compatible
+gateway is `https://ark.cn-beijing.volces.com/api/compatible`, and the default
+S2 model is `doubao-seed-evolving`.
+
+```bash
+cd /root/autodl-tmp/minicpmo/Interaction-Model
+nano .env
+/root/autodl-tmp/minicpmo/MiniCPM-o-Demo/.venv/base/bin/python \
+  scripts/probe_s2.py --env-file .env
+```
+
+Setting `S2_LLM_PROVIDER=anthropic_compatible` makes `BackgroundModel` use the
+streaming Anthropic Messages backend. The older Ark/OpenAI-compatible backend
+remains available for other models. Leaving the provider unset keeps the
+deterministic development backend. This enables the external S2 task path in
+InteractFormer; it does not by itself add hidden-state injection to the
+unmodified official MiniCPM-o web demo.

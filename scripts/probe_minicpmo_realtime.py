@@ -70,14 +70,33 @@ async def run(args):
                 jpeg_frame=jpeg if start == 0 else None,
             )
             await asyncio.sleep(0.2)
+        # Duplex inference advances only while input units keep arriving.  A
+        # fixed tail can stop the upstream clock while the model is still
+        # speaking, in which case it can never emit the following listen
+        # state.  Send the requested initial tail, then keep the clock alive
+        # with silence until the model yields the floor or the total response
+        # deadline expires.
         silence = np.zeros(turn_samples, dtype=np.float32)
+        loop = asyncio.get_running_loop()
+        response_deadline = loop.time() + args.response_timeout
+
+        async def send_silence_turn():
+            if loop.time() >= response_deadline:
+                raise TimeoutError(
+                    "model did not yield the duplex turn before the response timeout"
+                )
+            await client.send_micro_turn(silence, sample_rate)
+            await asyncio.sleep(0.2)
+
         for _ in range(int(args.tail_silence_seconds / 0.2)):
             if end_of_turn.is_set():
                 break
-            await client.send_micro_turn(silence, sample_rate)
-            await asyncio.sleep(0.2)
+            await send_silence_turn()
+
+        while not end_of_turn.is_set():
+            await send_silence_turn()
+
         await client.flush()
-        await asyncio.wait_for(end_of_turn.wait(), timeout=args.response_timeout)
     finally:
         await client.close()
         if not receiver.done():
@@ -118,7 +137,10 @@ def main():
     try:
         return asyncio.run(run(args))
     except Exception as exc:
-        print(f"MiniCPM-o probe failed: {exc}", file=sys.stderr)
+        print(
+            f"MiniCPM-o probe failed: {type(exc).__name__}: {exc}",
+            file=sys.stderr,
+        )
         return 1
 
 

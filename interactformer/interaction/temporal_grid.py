@@ -62,8 +62,7 @@ class GridCell:
     text_embedding: Optional[torch.Tensor] = None
     hidden_state: Optional[torch.Tensor] = None
     output_speech: Optional[torch.Tensor] = None
-    output_text_tokens: Optional[list[int]] = None
-    output_text: Optional[str] = None  # Decoded natural language for S2
+    output_text: Optional[list[int]] = None
     background_injections: list = field(default_factory=list)
 
     # Cell lifecycle state
@@ -284,7 +283,7 @@ class TemporalGrid(nn.Module):
             (should_speak, confidence) tuple.
         """
         speech_prob = self.speech_gate(current_hidden)
-        return bool((speech_prob > 0.5).item()), speech_prob.item()
+        return speech_prob > 0.5, speech_prob.item()
 
     def detect_interruption(
         self,
@@ -308,7 +307,7 @@ class TemporalGrid(nn.Module):
         logits = self.interruption_detector(combined)
         probs = torch.softmax(logits, dim=-1)
         # probs: [B, 2]; index with [0, 1] not [1] for batch safety
-        return bool((probs[0, 1] > 0.5).item()), probs[0, 1].item()
+        return probs[0, 1] > 0.5, probs[0, 1].item()
 
     def build_attention_mask(
         self,
