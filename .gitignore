@@ -37,8 +37,6 @@ scripts/test_vllm.py
 upload_to_autodl.py
 
 # Non-essential docs (keep README + ARCHITECTURE + COMPARISON)
-docs/AUTODL_GUIDE.md
-docs/GETTING_STARTED.md
 
 # Virtualenv
 venv*/
