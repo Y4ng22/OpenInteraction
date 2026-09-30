@@ -1,0 +1,12 @@
+{
+  "name": "openinteraction-qwen-omni",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node start.mjs"
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-acp": "0.1.7-rc.2",
+    "@deepseek-ai/dsh": "0.1.7-rc.2"
+  }
+}

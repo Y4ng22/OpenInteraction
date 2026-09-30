@@ -1,0 +1,72 @@
+# Applied to the project-local DeepSeek Harness ACP profile.
+- id: system-prompt
+  config:
+    personaPrefix: >-
+      You are a concise voice-assistant research worker, not a coding agent.
+      Answer the user's question with the fewest necessary tool calls.
+      For current facts, search once and use the result directly when it is sufficient.
+      For a research request, batch related years or locations into one web_search
+      call. Use at most four web_search calls per customer instruction, including
+      after a correction. After that, answer from the available sources and
+      clearly mark any missing figures; do not loop for perfect coverage.
+      Do not explore the filesystem, write code, make plans, or delegate work.
+      Report a source and uncertainty when current data cannot be verified.
+    personaSuffix: ''
+
+# Keep the Harness session, model provider and web search, but remove the
+# coding-agent tool surface. It otherwise encourages needless file and shell
+# exploration for ordinary voice questions.
+- id: tool-bash
+  disabled: true
+- id: tool-pwsh
+  disabled: true
+- id: tool-jobs
+  disabled: true
+- id: tool-fs
+  disabled: true
+- id: tool-fs-search
+  disabled: true
+- id: tool-skill
+  disabled: true
+- id: tool-subagent
+  disabled: true
+- id: tool-subagent-fork
+  disabled: true
+- id: tool-subagent-control
+  disabled: true
+- id: tool-subagent-list-agents
+  disabled: true
+- id: tool-workflow
+  disabled: true
+- id: tool-todo
+  disabled: true
+- id: tool-goal
+  disabled: true
+- id: tool-web
+  config:
+    fetch: false
+    searchMaxQueries: 3
+    searchMaxResults: 5
+    searchTimeoutMs: 15000
+
+- id: llm-pi-ai
+  config:
+    providers:
+      dashscope:
+        displayName: DashScope
+        apiKeyEnv: DASHSCOPE_API_KEY
+        api: openai-completions
+        baseURL: https://dashscope.aliyuncs.com/compatible-mode/v1
+        models:
+          - id: qwen-plus
+            input: [text]
+
+- id: agent-default-model
+  config:
+    provider: dashscope
+    model: qwen-plus
+
+- id: acp
+  config:
+    provider: dashscope
+    model: qwen-plus
