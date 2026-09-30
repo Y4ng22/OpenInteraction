@@ -1,0 +1,7 @@
+packages:
+  - server
+  - web
+  - tui
+  - desktop
+  - cli
+  - mobile
