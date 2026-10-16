@@ -69,14 +69,15 @@ async function harness(t) {
   return { frontend, received, events, errors, emit, reply, connection }
 }
 
-test('3.8 configures nested PCM formats, Tina and semantic VAD only on initial setup', t => {
+test('3.8 configures nested PCM formats, Tina and server VAD only on initial setup', t => {
   configure(t)
   const session = dashscopeProvider.buildSession({ configured: false })
   assert.deepEqual(session.audio, {
     input: { format: { type: 'pcm', sample_rate: 16000 } },
     output: { format: { type: 'pcm', sample_rate: 24000 }, voice: 'Tina' },
   })
-  assert.deepEqual(session.turn_detection, { type: 'semantic_vad' })
+  // Server VAD with a 400 ms pause window (see Qwen-Omni/README.md).
+  assert.deepEqual(session.turn_detection, { type: 'server_vad', threshold: 0.7, silence_duration_ms: 400 })
   assert.deepEqual(session.modalities, ['text', 'audio'])
   for (const key of ['voice', 'input_audio_format', 'output_audio_format']) assert.equal(key in session, false)
   assert.ok(session.tools.length)
@@ -209,13 +210,19 @@ test('3.8 sends only the latest camera frame within a spoken input window', asyn
   assert.equal(h.frontend.appendImage('old-frame'), true)
   assert.equal(h.frontend.appendImage('latest-frame'), true)
   assert.deepEqual(h.received.map(event => event.type), ['session.update'])
-  h.frontend.appendAudio(Buffer.alloc(3200).toString('base64'))
+  const voiced = Buffer.alloc(3200, 16).toString('base64')
+  h.frontend.appendAudio(voiced)
   h.emit({ type: 'input_audio_buffer.speech_started', item_id: 'spoken-input' })
+  await waitFor(() => h.events.some(event => event.type === 'input_audio_buffer.speech_started'))
+  // The speech receipt alone does not release the frame; the next voiced
+  // audio write in the spoken window carries it.
+  assert.equal(h.received.some(event => event.type === 'input_image_buffer.append'), false)
+  h.frontend.appendAudio(voiced)
   await waitFor(() => h.received.some(event => event.type === 'input_image_buffer.append'))
   assert.deepEqual(h.received.map(event => event.type), [
-    'session.update', 'input_audio_buffer.append', 'input_image_buffer.append',
+    'session.update', 'input_audio_buffer.append', 'input_audio_buffer.append', 'input_image_buffer.append',
   ])
-  assert.equal(h.received[2].image, 'latest-frame')
+  assert.equal(h.received[3].image, 'latest-frame')
   h.emit({ type: 'input_audio_buffer.speech_stopped', item_id: 'spoken-input' })
   await waitFor(() => h.events.some(event => event.type === 'input_audio_buffer.speech_stopped'))
   assert.equal(h.frontend.appendImage('idle-frame'), true)

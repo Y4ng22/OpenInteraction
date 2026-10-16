@@ -106,7 +106,7 @@ const omniTransportCapabilities = {
 
 const omniSessionDefaults = {
   voice: 'Ethan',
-  turnDetection: { type: 'semantic_vad' },
+  turnDetection: { type: 'server_vad', threshold: 0.7, silence_duration_ms: 400 },
 }
 
 const legacySessionDefaults = {
@@ -120,7 +120,7 @@ test('lists the exact DashScope realtime model catalog in product order', () => 
       id: OMNI_38_FLASH_ID,
       label: 'Qwen3.8 Omni Flash Realtime',
       family: 'omni',
-      sessionDefaults: { voice: 'Tina', turnDetection: { type: 'semantic_vad' } },
+      sessionDefaults: { voice: 'Tina', turnDetection: { type: 'server_vad', threshold: 0.7, silence_duration_ms: 400 } },
       modelCapabilities: omniModelCapabilities,
       transportCapabilities: omniTransportCapabilities,
     },

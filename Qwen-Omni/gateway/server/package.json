@@ -13,6 +13,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "@qwen-code/open-computer-use": "^0.2.3",
     "express": "^4.22.2",
+    "json5": "2.2.3",
     "ws": "^8.21.3",
     "yaml": "2.9.0",
     "zod": "^4.5.4"
