@@ -2,22 +2,53 @@
 // http://127.0.0.1:3101/ 控制台，走完整 Gateway → DashScope Realtime 链路，
 // 断言 ASR 转写、语音回复、后台任务播报顺序与打断行为。
 //
-// 用法：node e2e/voice-e2e.mjs [A|B|C|D ...]（缺省全部）
-// 环境变量：E2E_HEADED=1 用可见窗口；E2E_TAKEOVER=1 允许接管被占用的语音。
+// 用法：node e2e/voice-e2e.mjs [A|B|C|D|T1|T2 ...]（缺省全部）
+// 环境变量：E2E_HEADED=1 用可见窗口；E2E_TAKEOVER=1 允许接管被占用的语音；
+//   E2E_EXPECT_LATENT=1 要求场景 T 被改向的任务在 store 与任务记录中有最终 latentRef（需经 latent-proxy 启动）；
+//   E2E_HISTORY_DIR 指定 Qwen-Omni/history 以外的记录目录。
 //
 // 运行前提：
 //   - gateway 已重启并加载最新代码（web/dist 已重建）
 //   - 用户在 3101 的 Chrome 标签页已关闭（voice ownership 按 owner 串行）
 //   - dsh（DeepSeek Harness）在运行（场景 B/C）
 import { chromium } from 'playwright'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { buildTimelineWav, pickVoice } from './wav-timeline.mjs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { buildTimelineWav, pickVoice, synthesizeSpeech } from './wav-timeline.mjs'
 
 const BASE_URL = 'http://127.0.0.1:3101/'
 const VOICE_BUTTON = 'button.voice'
 const HEADED = process.env.E2E_HEADED === '1'
+const EXPECT_LATENT = process.env.E2E_EXPECT_LATENT === '1'
+// Qwen-Omni/history：pnpm start 写入任务记录和 latent store 的位置。
+const HISTORY_DIR = process.env.E2E_HISTORY_DIR
+  || join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'history')
+
+// 页面收到的任务事件不带 latentRef（latent 只交给前台模型服务），所以直接检查
+// latent-proxy 写入的 store 和 Gateway 持久化的任务记录。
+async function latentRefFor(taskId, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    const storeDir = join(HISTORY_DIR, 'latents', taskId)
+    const finals = existsSync(storeDir)
+      ? readdirSync(storeDir).filter(name => name.endsWith('.json'))
+        .map(name => JSON.parse(readFileSync(join(storeDir, name), 'utf8')))
+        .filter(manifest => manifest.final)
+      : []
+    let saved = null
+    try {
+      const state = JSON.parse(readFileSync(join(HISTORY_DIR, 'tasks.json'), 'utf8'))
+      const tasks = Array.isArray(state) ? state : Object.values(state.tasks || state)
+      saved = tasks.find(task => task.id === taskId)?.latentRef || null
+    } catch {}
+    const newest = finals.sort((left, right) => right.seq - left.seq)[0]
+    if (newest && saved?.key === `${taskId}/${newest.seq}`) return saved
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  return null
+}
 const TAKEOVER = process.env.E2E_TAKEOVER === '1'
 
 class FrameLog {
@@ -79,6 +110,7 @@ function projectFrame(dir, raw) {
       if (frame.taskId === undefined) frame.taskId = task.id
       if (task.status) frame.status = task.status
       if (task.objective) frame.objective = task.objective
+      if (task.message) frame.message = task.message
       if (task.turnId) frame.turnId = frame.turnId || task.turnId
     }
     return frame
@@ -87,7 +119,7 @@ function projectFrame(dir, raw) {
   }
 }
 
-async function launchPage({ wavPath = null, sessionSuffix = '', log = null } = {}) {
+async function launchPage({ wavPath = null, liveMic = false, sessionSuffix = '', log = null } = {}) {
   const args = [
     '--use-fake-ui-for-media-stream',
     '--use-fake-device-for-media-stream',
@@ -96,6 +128,62 @@ async function launchPage({ wavPath = null, sessionSuffix = '', log = null } = {
   if (wavPath) args.push(`--use-file-for-fake-audio-capture=${wavPath}`)
   const browser = await chromium.launch({ channel: 'chrome', headless: !HEADED, args })
   const context = await browser.newContext()
+  if (liveMic) {
+    // 由测试控制的麦克风：getUserMedia 返回一个 AudioContext 输出流，平时是
+    // 静音，测试调用 window.__e2eSpeak 时才播放一句合成语音。页面自己的采集、
+    // 门控和上行链路保持不变，只是说话时机可以跟着对话走。
+    await context.addInitScript(() => {
+      const devices = navigator.mediaDevices
+      if (!devices?.getUserMedia) return
+      const getUserMedia = devices.getUserMedia.bind(devices)
+      let mic = null
+      const ensureMic = async () => {
+        if (!mic) {
+          const context = new AudioContext({ sampleRate: 48_000 })
+          mic = { context, destination: context.createMediaStreamDestination() }
+        }
+        if (mic.context.state !== 'running') await mic.context.resume()
+        return mic
+      }
+      devices.getUserMedia = async constraints => {
+        if (!constraints?.audio) return getUserMedia(constraints)
+        // 页面关闭采集时会 stop 音轨，每次给一个独立的克隆。
+        return (await ensureMic()).destination.stream.clone()
+      }
+      window.__e2eSpeak = async (base64, sampleRate) => {
+        const { context, destination } = await ensureMic()
+        const bytes = Uint8Array.from(atob(base64), char => char.charCodeAt(0))
+        const pcm = new Int16Array(bytes.buffer)
+        const buffer = context.createBuffer(1, pcm.length, sampleRate)
+        const channel = buffer.getChannelData(0)
+        for (let index = 0; index < pcm.length; index += 1) channel[index] = pcm[index] / 0x8000
+        const source = context.createBufferSource()
+        source.buffer = buffer
+        source.connect(destination)
+        await new Promise(resolve => {
+          source.onended = resolve
+          source.start()
+        })
+        return buffer.duration
+      }
+    })
+  } else {
+    // Chrome 155 的伪麦克风在 echoCancellation: { ideal: 'all' } 下会立刻结束音轨、
+    // 不出声音，页面的采集生命周期随之反复重启。仅在测试中把它换成 true，页面、
+    // Gateway 与模型链路保持原样。
+    await context.addInitScript(() => {
+      const devices = navigator.mediaDevices
+      if (!devices?.getUserMedia) return
+      const getUserMedia = devices.getUserMedia.bind(devices)
+      devices.getUserMedia = constraints => {
+        const audio = constraints?.audio
+        if (audio && typeof audio === 'object' && audio.echoCancellation?.ideal === 'all') {
+          return getUserMedia({ ...constraints, audio: { ...audio, echoCancellation: true } })
+        }
+        return getUserMedia(constraints)
+      }
+    })
+  }
   const page = await context.newPage()
   const frames = new FrameLog()
   page.on('websocket', ws => {
@@ -178,6 +266,167 @@ async function runScenario(name, run, log) {
   } catch (error) {
     log(`=== 场景 ${name} 失败：${error.message} ===`)
     return false
+  }
+}
+
+// 任务控制（全程语音）：两次开口各建一个后台任务（多任务），再按 controls 的
+// 顺序开口改向一个、取消另一个。改向必须作用于原任务（不另起新任务）；被改向
+// 的任务完成并播报，被取消的任务不完成、不播报。
+//
+// 说话由测试控制的麦克风完成：会话就绪后才开口，每句都等模型上一句播完再说，
+// 避免打断导致 ASR 丢掉句首。任务要求分多地检索，留出改向和取消的时间。
+const SPEECH_SAMPLE_RATE = 16_000
+
+function speechBase64(text, voice) {
+  const samples = synthesizeSpeech(text, voice)
+  const pcm = new Int16Array(samples.length)
+  for (let index = 0; index < samples.length; index += 1) {
+    pcm[index] = Math.round(Math.max(-1, Math.min(1, samples[index])) * 0x7fff)
+  }
+  return Buffer.from(pcm.buffer).toString('base64')
+}
+
+function taskControlScenario({ suffix, tasks, controls }) {
+  return async log => {
+    const voice = pickVoice()
+    const steps = [...tasks, ...controls].map(step => ({ ...step, audio: speechBase64(step.say, voice) }))
+    const { browser, page, frames } = await launchPage({ liveMic: true, sessionSuffix: suffix, log })
+    const isCreated = frame => ['task.accepted', 'task.scheduled', 'task.running'].includes(frame.type)
+    const firstSeen = taskId => frames.items.find(frame => isCreated(frame) && frame.taskId === taskId)?.ts ?? Infinity
+    const createdIds = () => [...new Set(frames.items.filter(isCreated).map(frame => frame.taskId).filter(Boolean))]
+    // 改向会把 objective 改成新指令，按任务第一次出现时的 objective 归类。
+    const objectiveOf = taskId => frames.items
+      .find(frame => frame.taskId === taskId && frame.objective)?.objective || ''
+    const idsFor = keyword => createdIds().filter(id => objectiveOf(id).includes(keyword))
+    const announcedIds = frame => [
+      ...(Array.isArray(frame.taskIds) ? frame.taskIds : []),
+      frame.taskId,
+    ].filter(Boolean)
+    // 模型空闲：最近一条 voice.state 为 idle，且此后有声音的回复都已播完、被打断
+    // 或被清除，并且 1 秒内没有新的回复开始。只调用工具、不出声音的回复不会
+    // 有 playback.* 回执，所以只追踪页面报告过 playback.started 的回复。
+    const responseEnded = responseId => frames.items.some(frame => frame.responseId === responseId && (
+      (frame.dir === 'sent' && ['playback.ended', 'playback.cancelled'].includes(frame.type))
+      || (frame.dir === 'recv' && ['response.interrupted', 'playback.clear'].includes(frame.type))
+    ))
+    const modelIdle = since => {
+      const voiceState = frames.items.filter(frame => frame.dir === 'recv' && frame.type === 'voice.state').at(-1)
+      if (voiceState && voiceState.state !== 'idle') return false
+      const playing = frames.items.filter(frame => (
+        frame.dir === 'sent' && frame.type === 'playback.started' && frame.ts >= since
+      ))
+      if (!playing.every(frame => responseEnded(frame.responseId))) return false
+      const lastStart = frames.items.filter(frame => frame.type === 'response.started').at(-1)?.ts ?? 0
+      return Date.now() - Math.max(lastStart, since) >= 1_000
+    }
+    const waitModelIdle = async (since, timeoutMs = 20_000) => {
+      const deadline = Date.now() + timeoutMs
+      while (Date.now() < deadline) {
+        if (modelIdle(since)) return
+        await page.waitForTimeout(250)
+      }
+      log('模型 20 秒内未空闲，继续下一句')
+    }
+    let lastSpokeAt = Date.now()
+    const say = async step => {
+      await waitModelIdle(lastSpokeAt)
+      log(`说：${step.say}`)
+      lastSpokeAt = Date.now()
+      await page.evaluate(([audio, rate]) => window.__e2eSpeak(audio, rate), [step.audio, SPEECH_SAMPLE_RATE])
+      const heard = await frames.wait(
+        frame => isUserFinal(frame) && frame.ts >= lastSpokeAt && String(frame.content || '').includes(step.keyword),
+        30_000, `「${step.keyword}」的 ASR 转写`,
+      )
+      log(`转写：${heard.content}`)
+      return heard
+    }
+    try {
+      await enableMic(page, log)
+      await frames.wait(frame => frame.type === 'voice.ready', 30_000, '实时语音就绪')
+      await page.waitForTimeout(2_000)
+      // 多任务：两次语音各创建一个后台任务，按关键词归类。
+      for (const task of tasks) {
+        await say(steps.find(step => step.say === task.say))
+        await waitUntil(() => idsFor(task.keyword).length > 0, 60_000, `「${task.keyword}」后台任务被创建`)
+      }
+      const taskIds = Object.fromEntries(tasks.map(task => [task.keyword, idsFor(task.keyword)]))
+      log(`多任务通过：${tasks.map(task => `${task.keyword}=${taskIds[task.keyword].join('/')}`).join('，')}`)
+      const extraBefore = createdIds().filter(id => !Object.values(taskIds).flat().includes(id))
+      if (extraBefore.length) log(`注意：模型额外创建了任务 ${extraBefore.join(', ')}`)
+
+      let steeredId = null
+      const cancelledIds = new Set()
+      let controlsStartedAt = Infinity
+      for (const control of controls) {
+        const heard = await say(steps.find(step => step.say === control.say))
+        controlsStartedAt = Math.min(controlsStartedAt, heard.ts)
+        const targets = taskIds[control.target]
+        if (control.kind === 'steer') {
+          const isSteer = frame => (
+            frame.type === 'task.updated'
+            && targets.includes(frame.taskId)
+            && String(frame.message || '').startsWith('已改向')
+          )
+          await waitUntil(() => frames.items.some(isSteer), 60_000, `「${control.target}」任务被改向`)
+          steeredId = frames.items.find(isSteer).taskId
+          log(`改向通过：${steeredId}`)
+        } else {
+          const isCancel = frame => frame.type === 'task.cancelled' && targets.includes(frame.taskId)
+          await waitUntil(() => frames.items.some(isCancel), 60_000, `「${control.target}」任务被取消`)
+          frames.items.filter(isCancel).forEach(frame => cancelledIds.add(frame.taskId))
+          log(`取消通过：${[...cancelledIds].join(', ')}`)
+        }
+      }
+      const lateTasks = createdIds().filter(id => firstSeen(id) >= controlsStartedAt)
+      if (lateTasks.length) {
+        throw new Error(`改向或取消时另起了新任务：${lateTasks.join(', ')}（应作用于原任务）`)
+      }
+
+      // 被改向的任务完成并播报；被取消的任务不完成、不播报。
+      await frames.wait(
+        frame => frame.type === 'task.completed' && frame.taskId === steeredId,
+        600_000, `被改向任务 ${steeredId} 完成`,
+      )
+      if (EXPECT_LATENT) {
+        const latentRef = await latentRefFor(steeredId)
+        if (!latentRef) {
+          throw new Error(`任务 ${steeredId} 完成后 store 与任务记录中没有对应的最终 latentRef（latent 链路未通）`)
+        }
+        log(`latent 通过：latentRef=${latentRef.key}（${latentRef.tokens}×${latentRef.dim} ${latentRef.dtype}）`)
+      }
+      const announcement = await frames.wait(
+        frame => (
+          frame.type === 'response.started'
+          && frame.origin === 'announcement'
+          && announcedIds(frame).includes(steeredId)
+        ),
+        120_000, `被改向任务 ${steeredId} 的结果播报`,
+      )
+      await frames.wait(
+        frame => (
+          frame.dir === 'sent'
+          && frame.type === 'playback.ended'
+          && frame.responseId === announcement.responseId
+        ),
+        180_000, '结果播报播放完毕回执',
+      )
+      log('被改向任务已完成并播报完毕')
+      for (const cancelledId of cancelledIds) {
+        if (frames.items.some(frame => frame.type === 'task.completed' && frame.taskId === cancelledId)) {
+          throw new Error(`已取消的任务 ${cancelledId} 仍然完成了`)
+        }
+        if (frames.items.some(frame => (
+          frame.type === 'response.started'
+          && frame.origin === 'announcement'
+          && announcedIds(frame).includes(cancelledId)
+        ))) {
+          throw new Error(`已取消的任务 ${cancelledId} 仍被当作结果播报`)
+        }
+      }
+      log('已取消的任务没有完成也没有播报')
+    } finally {
+      await browser.close()
+    }
   }
 }
 
@@ -574,6 +823,32 @@ const SCENARIOS = {
       rmSync(dir, { recursive: true, force: true })
     }
   },
+
+  // 任务控制流程 1：先改向第一个任务，再取消第二个任务。
+  T1: taskControlScenario({
+    suffix: 'T1',
+    tasks: [
+      { keyword: '新能源', say: '请在后台帮我分别调研北京上海广州深圳四个城市最近一个月的新能源汽车新闻并按城市整理要点' },
+      { keyword: '人工智能', say: '再在后台帮我分别查一下美国中国欧洲日本四个地区最新的人工智能新闻并按地区整理要点' },
+    ],
+    controls: [
+      { kind: 'steer', target: '新能源', keyword: '电池', say: '新能源汽车那个任务改一下只要电池技术相关的新闻' },
+      { kind: 'cancel', target: '人工智能', keyword: '取消', say: '人工智能新闻那个任务不用做了帮我取消掉' },
+    ],
+  }),
+
+  // 任务控制流程 2：先取消第一个任务，再改向第二个任务。
+  T2: taskControlScenario({
+    suffix: 'T2',
+    tasks: [
+      { keyword: '芯片', say: '请在后台帮我分别整理中国美国韩国日本四个国家最近半年芯片行业的重要进展并按国家列出要点' },
+      { keyword: '气候', say: '再在后台帮我分别调研亚洲欧洲非洲美洲四个大洲最近的气候变化新闻并按大洲整理要点' },
+    ],
+    controls: [
+      { kind: 'cancel', target: '芯片', keyword: '取消', say: '芯片那个任务不用做了帮我取消掉' },
+      { kind: 'steer', target: '气候', keyword: '极端', say: '气候变化那个任务改一下只关注极端天气' },
+    ],
+  }),
 }
 
 const selected = process.argv.slice(2).filter(arg => arg in SCENARIOS)

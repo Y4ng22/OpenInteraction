@@ -5,3 +5,7 @@ packages:
   - desktop
   - cli
   - mobile
+
+# The Qwen-Omni route installs this workspace with pnpm (see Qwen-Omni/README.md);
+# upstream pins npm in package.json, so report that mismatch as a warning only.
+pmOnFail: warn

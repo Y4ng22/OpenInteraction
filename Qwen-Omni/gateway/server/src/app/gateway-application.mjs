@@ -8,6 +8,7 @@ import { resolve } from 'path'
 import { agent as defaultAgent } from '../backend/adapters/agent-client.mjs'
 import { BackendAvailability } from '../backend/availability.mjs'
 import { BackendWorkRuntime } from '../backend/backend-work-runtime.mjs'
+import { createLatentBridge } from '../latent/latent-bridge.mjs'
 import { TaskOperations } from '../orchestration/task-operations.mjs'
 import { config as defaultConfig } from '../core/config.mjs'
 import { logger as defaultLogger } from '../core/logger.mjs'
@@ -98,7 +99,10 @@ export function createGatewayApplication({
   publicEndpoint = undefined,
   webrtc = undefined,
 } = {}) {
-const workBackend = backendRuntime || new BackendWorkRuntime({ backend: agent })
+const workBackend = backendRuntime || new BackendWorkRuntime({
+  backend: agent,
+  latent: createLatentBridge(config, { logger }),
+})
 const sessionJournalRuntime = sessionJournal || new SessionJournalRegistry({
   directory: config.sessionHistoryDirectory || resolve(config.stateDirectory, 'sessions'), logger,
 })

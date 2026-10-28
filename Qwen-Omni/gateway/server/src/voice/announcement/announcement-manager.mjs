@@ -60,6 +60,7 @@ function announcementDelivery(batch) {
     origin: 'announcement',
     text: formatWorkResults(batch.announcements),
     correlation,
+    latentRefs: batch.announcements.map(item => item.latentRef).filter(Boolean),
   })
 }
 
@@ -138,6 +139,7 @@ export class AnnouncementManager {
       kind: task.kind,
       objective: task.objective,
       result: task.result,
+      ...(task.latentRef ? { latentRef: task.latentRef } : {}),
       completedAt: task.completedAt,
       scheduledAt: task.schedule?.at,
       recurrence: task.schedule?.recurrence,

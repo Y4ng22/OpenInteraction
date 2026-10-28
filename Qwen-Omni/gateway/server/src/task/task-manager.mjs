@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
+import { normalizeLatentRef } from '../latent/latent-ref.mjs'
 import { TaskScheduler } from './task-scheduler.mjs'
 import { TaskDomainEvent } from './task-events.mjs'
 import { TaskNotificationQueue } from './task-notification-queue.mjs'
@@ -176,6 +177,11 @@ export class TaskManager {
       delete saved.presentation
       delete saved.resultMetadata
       saved.artifacts = normalizeArtifacts(saved.artifacts)
+      if (saved.latentRef !== undefined) {
+        const latentRef = normalizeLatentRef(saved.latentRef)
+        if (latentRef) saved.latentRef = latentRef
+        else delete saved.latentRef
+      }
       saved.authorization = normalizeAuthorization(saved.authorization, {
         taskId: saved.id,
       })
@@ -802,6 +808,9 @@ export class TaskManager {
         this.flushProgress(task)
         transitionTask(task, TaskStatus.COMPLETED)
         task.result = String(outcome?.content ?? outcome ?? '').trim()
+        const latentRef = normalizeLatentRef(outcome?.latentRef)
+        if (latentRef) task.latentRef = latentRef
+        else delete task.latentRef
         task.artifacts = mergeArtifacts(
           task.artifacts,
           artifactsFromOutcome(outcome),

@@ -28,6 +28,7 @@ export function createAgentDelivery({
   text,
   correlation = {},
   presentation = {},
+  latentRefs = [],
 } = {}) {
   const normalizedMode = clean(mode)
   const normalizedText = clean(text)
@@ -42,6 +43,10 @@ export function createAgentDelivery({
   const contextTiming = presentation.contextTiming === 'immediate'
     ? 'immediate'
     : 'response'
+  // LatentRefs are validated where Tasks accept backend outcomes.
+  const normalizedLatentRefs = Array.isArray(latentRefs)
+    ? latentRefs.filter(ref => ref && typeof ref === 'object')
+    : []
   return Object.freeze({
     id: clean(id) || `delivery_${randomUUID()}`,
     ...(clean(causeEventId) ? { causeEventId: clean(causeEventId) } : {}),
@@ -49,6 +54,11 @@ export function createAgentDelivery({
     origin: clean(origin) || 'gateway',
     text: normalizedText,
     correlation: Object.freeze({ ...correlation }),
+    // Background latents for frontends that declare latentInjection. The text
+    // remains authoritative; frontends without the capability ignore this.
+    ...(normalizedLatentRefs.length
+      ? { latentRefs: Object.freeze(normalizedLatentRefs) }
+      : {}),
     ...(presentationInstructions || presentationAllowsTools || contextTiming === 'immediate'
       ? {
           presentation: Object.freeze({

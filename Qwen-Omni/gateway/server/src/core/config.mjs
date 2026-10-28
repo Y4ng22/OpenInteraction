@@ -501,6 +501,13 @@ export const config = {
     350,
     { min: 0, max: 2000 },
   ),
+  // Progress updates and task results wait until the user has been silent this
+  // long, so they never start while the user is taking the floor.
+  proactiveUserFloorMs: numberSetting(
+    process.env.QWEN_AUDIO_PROACTIVE_USER_FLOOR_MS,
+    1000,
+    { min: 0, max: 5000 },
+  ),
   announcementAcknowledgementTimeoutMs: numberSetting(
     process.env.QWEN_AUDIO_AGENT_ANNOUNCEMENT_ACK_TIMEOUT_MS,
     120_000,
@@ -534,6 +541,14 @@ export const config = {
   backendSessionStatePath: process.env.QWEN_AUDIO_AGENT_BACKEND_SESSION_STATE_PATH
     ? resolve(root, process.env.QWEN_AUDIO_AGENT_BACKEND_SESSION_STATE_PATH)
     : resolve(runtimeEnvironment.stateDirectory, 'acp-sessions.json'),
+  // Latent communication through Qwen-Omni/latent-proxy. Off by default; when
+  // off, backend instructions and task deliveries stay text-only.
+  latentEnabled: ['1', 'true'].includes(
+    String(process.env.QWEN_AUDIO_LATENT_ENABLED || '').trim().toLowerCase(),
+  ),
+  latentStoreDirectory: process.env.QWEN_AUDIO_LATENT_STORE_DIR
+    ? resolve(root, process.env.QWEN_AUDIO_LATENT_STORE_DIR)
+    : resolve(runtimeEnvironment.stateDirectory, 'latents'),
   taskTerminalTtlMs: numberSetting(
     process.env.QWEN_AUDIO_AGENT_TASK_TERMINAL_TTL_MS,
     86_400_000,

@@ -165,6 +165,8 @@ export function publicTask(task, { now = Date.now() } = {}) {
     message: task.message || null,
     artifacts: normalizeArtifacts(task.artifacts),
     activity: [...(task.activity || [])],
+    // Present only for Tasks whose backend produced a latent (latent-proxy).
+    ...(task.latentRef ? { latentRef: task.latentRef } : {}),
     delegation: task.delegation
       ? {
           status: task.delegation.status || 'running',

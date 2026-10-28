@@ -32,6 +32,7 @@ export class RealtimeProviderSession {
     stableConnectionMs = 10_000,
     createFrontend = createRealtimeFrontend,
     reconnectBackoff = new ReconnectBackoff(),
+    frontendOptions = {},
   }) {
     this.providerRegistry = providerRegistry
     this.providerKey = providerRegistry.resolve(defaultProvider).key
@@ -52,6 +53,8 @@ export class RealtimeProviderSession {
     this.maxPendingAudioChunks = maxPendingAudioChunks
     this.stableConnectionMs = stableConnectionMs
     this.createFrontend = createFrontend
+    // Behavioral options forwarded to every RealtimeFrontend this Session opens.
+    this.frontendOptions = { ...frontendOptions }
     this.reconnectBackoff = reconnectBackoff
     this.frontend = null
     this.connectPromise = null
@@ -190,6 +193,7 @@ export class RealtimeProviderSession {
     this.logger.info('realtime.connecting', { provider: this.providerKey })
     let createdFrontend
     createdFrontend = this.createFrontend({
+      ...this.frontendOptions,
       providerName: this.providerKey,
       providerRegistry: this.providerRegistry,
       agentContext: this.getAgentContext(),

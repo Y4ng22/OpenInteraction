@@ -55,6 +55,7 @@ export class RealtimeAgentDeliveryRuntime {
         allowTools: delivery.presentation?.allowTools === true,
         contextTiming: delivery.presentation?.contextTiming || 'response',
         shouldRespond: shouldDeliver,
+        ...(delivery.latentRefs?.length ? { latentRefs: delivery.latentRefs } : {}),
       },
     )
   }

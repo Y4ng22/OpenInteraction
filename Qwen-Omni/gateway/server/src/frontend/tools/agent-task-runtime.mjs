@@ -559,11 +559,34 @@ export class AgentTaskRuntime {
       )
     } catch (error) {
       outputFailed = true
+      await this.recoverLostSpawnReceipt(task)
       throw error
     } finally {
       await this.host.completeDeferredToolResponse(deferred, {
         failed: outputFailed,
       })
+    }
+  }
+
+  /**
+   * The provider can reject a deferred receipt after its function call id has
+   * expired, for example when the user starts speaking before the receipt is
+   * sent. The Task still runs, so give the model its id as context; without it
+   * the model cannot later steer, cancel or query this work.
+   */
+  async recoverLostSpawnReceipt(task) {
+    const frontend = this.host.getFrontend?.()
+    if (!task?.id || typeof frontend?.appendUserContext !== 'function') return
+    try {
+      await frontend.appendUserContext([
+        '<background_task_accepted>',
+        `task_id=${task.id}`,
+        `objective=${String(task.objective || '').trim()}`,
+        '这项后台工作已经受理，但先前的工具回执没有送达。之后改向、取消或查询它时使用这个 task_id；不要再次创建它，也不要为此单独回复。',
+        '</background_task_accepted>',
+      ].join('\n'))
+    } catch {
+      // Best effort: the original delivery error is still reported.
     }
   }
 

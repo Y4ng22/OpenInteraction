@@ -63,6 +63,11 @@ function sayToPcm(text, voice) {
   }
 }
 
+/** One utterance as peak-normalized 16 kHz mono Float32 samples. */
+export function synthesizeSpeech(text, voice = pickVoice()) {
+  return sayToPcm(String(text || ''), voice)
+}
+
 export function readWav(buffer) {
   const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength)
   const ascii = (offset, length) => (

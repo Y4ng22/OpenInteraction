@@ -41,6 +41,7 @@ const CAPABILITY_FLAGS = [
   'clientResponses',
   'mutableSession',
   'imageRequiresAudioStart',
+  'latentInjection',
 ]
 
 const MODEL_CAPABILITY_FLAGS = [
@@ -182,6 +183,14 @@ export function validateRealtimeProvider(provider) {
     if (typeof provider[method] !== 'function') {
       throw new Error(`Realtime Provider ${provider.key} 缺少 ${method}()`)
     }
+  }
+  if (
+    provider.capabilities?.latentInjection === true
+    && typeof provider.buildLatentInjection !== 'function'
+  ) {
+    throw new Error(
+      `Realtime Provider ${provider.key} 声明了 latentInjection，但缺少 buildLatentInjection()`,
+    )
   }
   if (!Number.isFinite(provider.inputSampleRate)) {
     throw new Error(`Realtime Provider ${provider.key} 缺少 inputSampleRate`)

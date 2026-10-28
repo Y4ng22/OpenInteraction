@@ -1,5 +1,6 @@
 import { assertBackendPort } from './backend-port.mjs'
 import { backendInstructionFromWork } from './backend-work-input.mjs'
+import { LatentBridge } from '../latent/latent-bridge.mjs'
 
 function clean(value) {
   return String(value || '').trim()
@@ -12,13 +13,15 @@ function clean(value) {
  * Prompt formats, Session routing, and delegation topology belong to adapters.
  */
 export class BackendWorkRuntime {
-  constructor({ backend } = {}) {
+  constructor({ backend, latent = null } = {}) {
     this.backend = assertBackendPort(backend, {
       name: 'BackendWorkRuntime backend',
     })
+    // A disabled bridge returns instructions and outcomes unchanged.
+    this.latent = latent || new LatentBridge()
   }
 
-  run(input, options = {}) {
+  async run(input, options = {}) {
     const taskId = clean(options.taskId)
     const work = {
       id: taskId,
@@ -30,11 +33,15 @@ export class BackendWorkRuntime {
         ? { continuity: options.continuity }
         : {}),
     }
-    work.instruction = backendInstructionFromWork(work)
-    return this.backend.submit(work, {
+    work.instruction = this.latent.markInstruction(
+      taskId,
+      backendInstructionFromWork(work),
+    )
+    const outcome = await this.backend.submit(work, {
       signal: options.signal,
       onEvent: options.onEvent,
     })
+    return this.latent.attachToOutcome(taskId, outcome)
   }
 
   /**

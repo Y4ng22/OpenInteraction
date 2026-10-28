@@ -5,7 +5,7 @@
 | 目录 | 状态 | 说明 |
 | --- | --- | --- |
 | [`MiniCPM/`](MiniCPM/) | 保留原样 | 原有 MiniCPM-o 实现、脚本和测试整体移入；不在本仓库下载模型或权重。 |
-| [`Qwen-Omni/`](Qwen-Omni/) | 开发与验证中 | Qwen3.8 Omni Flash Realtime 前台、qwen-plus 后台、qwen-audio-agent Gateway 和 DeepSeek Harness。 |
+| [`Qwen-Omni/`](Qwen-Omni/) | 开发与验证中 | Qwen3.8 Omni Flash Realtime 前台、qwen-plus 后台、qwen-audio-agent Gateway 和 DeepSeek Harness；可选的 [`latent-proxy/`](Qwen-Omni/latent-proxy/) 用于 Latent Communication（P0）。 |
 | [`Self-Developed/`](Self-Developed/) | 原型保留 | 原仓库已有的 InteractFormer S1/S2、Bridge 与调度代码已原样复制；模型接口尚未确定，不新增适配。 |
 | [`experiments/`](experiments/) | 实验记录 | 每个实验一个文件夹：代码、方法与结果说明、评分报告（FDB-v3 端到端、委派测试集、委派训练）。 |
 

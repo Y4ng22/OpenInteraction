@@ -105,8 +105,18 @@ const DEFAULT_CAPABILITIES = Object.freeze({
   mutableSession: true,
   // Requires an audio timeline before accepting the first visual frame.
   imageRequiresAudioStart: false,
+  // latentInjection is opt-in only and deliberately absent here: a provider
+  // that declares it consumes background latents by LatentRef through
+  // buildLatentInjection(); every other provider keeps text delivery.
 })
 const DEFAULT_RESPONSE_CANCEL_GRACE_MS = 1_000
+// Speech the Gateway starts on its own, as opposed to replies to the user.
+const PROACTIVE_RESPONSE_ORIGINS = new Set(['progress', 'announcement', 'gateway-system-event'])
+// RMS above this marks a microphone chunk as the user's voice (silence frames
+// from the client energy gate are all zeros).
+const USER_VOICE_RMS = 32768 * 0.003
+// A missing speech_stopped must not hold Gateway speech back forever.
+const MAX_USER_FLOOR_WAIT_MS = 20_000
 // session.update 的节流与背压参数。每条 update 携带完整 instructions（几十
 // KiB），服务端处理期间可能停读 socket；限制频率并在缓冲高位时延后发送。
 const SESSION_UPDATE_MIN_INTERVAL_MS = 5_000
@@ -126,6 +136,7 @@ export class RealtimeFrontend {
     responseInactivityTimeoutMs,
     responseCompletionTimeoutMs,
     responseCancelGraceMs = DEFAULT_RESPONSE_CANCEL_GRACE_MS,
+    proactiveUserFloorMs = 0,
   } = {}) {
     this.provider = validateRealtimeProvider(provider)
     this.connectionId = randomUUID()
@@ -154,6 +165,10 @@ export class RealtimeFrontend {
     this.restoringContext = false
     this.audioInputStarted = false
     this.inputSpeechActive = false
+    // Gateway-initiated speech waits until the user has been quiet this long.
+    // 0 keeps the previous immediate behavior.
+    this.proactiveUserFloorMs = Math.max(0, Number(proactiveUserFloorMs) || 0)
+    this.lastUserVoiceAt = 0
     this.pendingImage = null
     this.pendingImageAt = 0
     this.audioDropCount = 0
@@ -456,17 +471,21 @@ export class RealtimeFrontend {
     const sent = this.send(this.protocol.audioAppend(audio), { audio: true })
     if (sent) {
       this.audioInputStarted = true
-      // Do not attach a frame to trailing silence: processing that very audio
-      // chunk may commit the remote VAD buffer before the image is handled.
-      // This only gates video; every audio sample still reaches the model.
-      const pcm = this.capabilities.imageRequiresAudioStart && this.pendingImage
+      const imageGated = Boolean(this.capabilities.imageRequiresAudioStart && this.pendingImage)
+      const pcm = imageGated || this.proactiveUserFloorMs > 0
         ? Buffer.from(audio, 'base64') : null
       let power = 0
       if (pcm) {
         for (let i = 0; i + 1 < pcm.length; i += 2) power += pcm.readInt16LE(i) ** 2
       }
-      const freshAudio = !pcm || power / Math.max(1, pcm.length / 2) > (32768 * 0.003) ** 2
-      if (freshAudio) this.flushPendingImage({ freshAudio: true })
+      const voiced = Boolean(pcm) && power / Math.max(1, pcm.length / 2) > USER_VOICE_RMS ** 2
+      // The provider's VAD reports speech about a second after it begins;
+      // the energy of the uploaded audio is known immediately.
+      if (voiced) this.lastUserVoiceAt = Date.now()
+      // Do not attach a frame to trailing silence: processing that very audio
+      // chunk may commit the remote VAD buffer before the image is handled.
+      // This only gates video; every audio sample still reaches the model.
+      if (!imageGated || voiced) this.flushPendingImage({ freshAudio: true })
     }
     return Boolean(sent)
   }
@@ -727,6 +746,7 @@ export class RealtimeFrontend {
       allowTools = false,
       contextTiming = 'response',
       shouldRespond,
+      latentRefs = [],
     } = {},
   ) {
     const content = String(text || '').trim()
@@ -747,7 +767,14 @@ export class RealtimeFrontend {
       throw new TypeError(`unsupported AgentDelivery route: ${route}`)
     }
     if (route === 'interrupt') this.cancel()
-    const injection = this.provider.buildResultInjection(content, { allowTools })
+    const latentInjected = this.capabilities.latentInjection === true
+      && Array.isArray(latentRefs)
+      && latentRefs.length > 0
+    // The latent dialect carries the same text alongside the refs, so the
+    // frontend conversation history stays readable and recoverable.
+    const injection = latentInjected
+      ? this.provider.buildLatentInjection(content, latentRefs, { allowTools })
+      : this.provider.buildResultInjection(content, { allowTools })
     const generation = this.responseQueueGeneration
     if (instructions && injection?.response) {
       injection.response.instructions = String(instructions)
@@ -768,6 +795,7 @@ export class RealtimeFrontend {
         completed: true,
         contextInjected,
         route,
+        ...(latentInjected ? { latentInjected } : {}),
       }
     }
     if (generation !== this.responseQueueGeneration) {
@@ -786,6 +814,7 @@ export class RealtimeFrontend {
       ...(outcome || {}),
       contextInjected,
       route,
+      ...(latentInjected ? { latentInjected } : {}),
     }
   }
 
@@ -821,8 +850,31 @@ export class RealtimeFrontend {
     // was in flight. Recheck immediately before sending, not just on enqueue.
     await this.whenIdle()
     if (!this.ready || pending.settled || pending.isCurrent?.() === false) return false
+    await this.waitForUserFloor(pending)
+    if (!this.ready || pending.settled || pending.isCurrent?.() === false) return false
     pending.responseRequested = true
     this.send(this.protocol.responseCreate(response))
+  }
+
+  /**
+   * Gateway-initiated speech yields the floor to the user. Until
+   * response.create is sent, a user interruption only settles the pending
+   * request; once sent, a single-slot provider needs an acknowledged cancel,
+   * and an unacknowledged one reconnects the session mid-utterance.
+   */
+  async waitForUserFloor(pending) {
+    if (!this.proactiveUserFloorMs || !PROACTIVE_RESPONSE_ORIGINS.has(pending.origin)) return
+    const startedAt = Date.now()
+    while (this.ready && !pending.settled && pending.isCurrent?.() !== false) {
+      const now = Date.now()
+      if (now - startedAt >= MAX_USER_FLOOR_WAIT_MS) return
+      const quietMs = now - Math.max(startedAt, this.lastUserVoiceAt)
+      if (!this.inputSpeechActive && quietMs >= this.proactiveUserFloorMs) return
+      await new Promise(resolve => {
+        const timer = setTimeout(resolve, Math.max(20, Math.min(100, this.proactiveUserFloorMs - quietMs)))
+        timer.unref?.()
+      })
+    }
   }
 
   cancel() {

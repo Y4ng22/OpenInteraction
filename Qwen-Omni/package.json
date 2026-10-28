@@ -3,7 +3,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "node start.mjs"
+    "start": "node start.mjs",
+    "test": "node --test harness/test/*.test.mjs && cd latent-proxy && python3 -m unittest discover -s tests -t ."
   },
   "dependencies": {
     "@deepseek-ai/dsh-acp": "0.1.7-rc.2",

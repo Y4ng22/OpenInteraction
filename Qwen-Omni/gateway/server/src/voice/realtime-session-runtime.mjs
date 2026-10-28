@@ -206,6 +206,7 @@ export function createRealtimeSessionRuntime({
       ...(sessionOutputVoice ? { voice: sessionOutputVoice } : {}),
     }),
     shouldReconnect: () => inputEnabled || outputEnabled,
+    frontendOptions: { proactiveUserFloorMs: config.proactiveUserFloorMs },
     onEvent: event => handleEvent(event),
     onDiagnostic: diagnostic => {
       const { event, ...fields } = diagnostic
