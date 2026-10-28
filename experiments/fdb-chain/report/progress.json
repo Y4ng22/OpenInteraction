@@ -1,0 +1,129 @@
+{
+ "updated": "2026-10-28T03:13:00Z",
+ "steps": [
+  {
+   "id": "s01",
+   "order": 1,
+   "phase": "Prepare",
+   "title": "Download When2Call and ToolACE to the server",
+   "status": "done",
+   "note": "/local/data/xy2764/data/When2Call and ToolACE"
+  },
+  {
+   "id": "s02",
+   "order": 2,
+   "phase": "Prepare",
+   "title": "Check Fun-Audio-Chat's training code",
+   "status": "done",
+   "note": "LLaMA-Factory based, in training/ of QwenAudio/Fun-Audio-Chat"
+  },
+  {
+   "id": "s03",
+   "order": 3,
+   "phase": "Prepare",
+   "title": "Rescore all setups, benchmark errors counted as passed",
+   "status": "done",
+   "note": "All 14 setups rescored; Fun hand-off only 68, or 78 with the 10 benchmark errors counted",
+   "updated": "2026-10-27T21:36:00Z"
+  },
+  {
+   "id": "s04",
+   "order": 4,
+   "phase": "Prepare",
+   "title": "Set up the training environment on the server",
+   "status": "done",
+   "note": "envs/funtrain: torch 2.8 (cu126), transformers 4.52.3, PEFT 0.17.1, DeepSpeed 0.17.3, LLaMA-Factory 0.9.4.dev0, pyarrow 18.1. No flash-attn yet; using sdpa.",
+   "updated": "2026-10-27T21:43:00Z"
+  },
+  {
+   "id": "s05",
+   "order": 5,
+   "phase": "Prepare",
+   "title": "Smoke test: LoRA + ZeRO-3 and QLoRA on 10 samples",
+   "status": "done",
+   "note": "Both train on 4 cards with the speech head off. LoRA + ZeRO-3: 10.5 GB per card, 3.5 s per step of 4 samples. QLoRA: 11.5 GB, 1.1 s. Loss 0.03 → 0.0002 by step 10.",
+   "updated": "2026-10-27T21:52:00Z"
+  },
+  {
+   "id": "s06",
+   "order": 6,
+   "phase": "Data",
+   "title": "Tool pool and held-out tool split",
+   "status": "done",
+   "note": "17,480 tools (When2Call 3,267, ToolACE 14,213); 126 FDB-like tools removed. The held-out split uses the domain labels from the next step.",
+   "updated": "2026-10-27T21:57:00Z"
+  },
+  {
+   "id": "s07",
+   "order": 7,
+   "phase": "Data",
+   "title": "Tool weight labels (lookup, search, action)",
+   "status": "done",
+   "note": "17,397 labeled (83 dropped: answer outside the label set). 14,168 suit voice: 11,312 lookup, 1,515 search, 1,341 action. Held out six whole domains (health, food, calendar, weather, real_estate, jobs): 1,662 tools, 276 of them action; 12,506 tools left for training.",
+   "updated": "2026-10-27T22:33:00Z"
+  },
+  {
+   "id": "s08",
+   "order": 8,
+   "phase": "Data",
+   "title": "Requests and targets, Qwen-Audio-Agent split",
+   "status": "running",
+   "note": "2 of 154 batches checked, 187 of 200 kept (000: 96, 001: 91). The prompt now covers how people talk: batches 002-153 are tagged with fillers (10%) or self-corrections (5%), the checker rejects a label that keeps the corrected-away value, and everything must be in English. Labeling rules and acceptance criteria are in DATA_SPEC.md. Pauses are added later at TTS. Waiting for batch 002. The server was unreachable at this check (VPN probably off); no server jobs are needed right now.",
+   "updated": "2026-10-28T04:30:12Z",
+   "pct": 57
+  },
+  {
+   "id": "s09",
+   "order": 9,
+   "phase": "Data",
+   "title": "Spoken rewrite and TTS",
+   "status": "todo",
+   "note": "Starts only after you have looked at the regenerated text samples and said go.",
+   "updated": "2026-10-28T01:34:00Z"
+  },
+  {
+   "id": "s10",
+   "order": 10,
+   "phase": "Data",
+   "title": "Training format and data checks",
+   "status": "todo"
+  },
+  {
+   "id": "s11",
+   "order": 11,
+   "phase": "Review",
+   "title": "Your review of the data",
+   "status": "todo",
+   "note": "Nothing that trains or uses the training data starts until you have checked the data and said go.",
+   "updated": "2026-10-28T00:13:00Z"
+  },
+  {
+   "id": "s12",
+   "order": 12,
+   "phase": "Train",
+   "title": "Untrained baseline with the clean FDB prompt",
+   "status": "todo"
+  },
+  {
+   "id": "s13",
+   "order": 13,
+   "phase": "Train",
+   "title": "SFT",
+   "status": "todo"
+  },
+  {
+   "id": "s14",
+   "order": 14,
+   "phase": "Train",
+   "title": "DPO",
+   "status": "todo"
+  },
+  {
+   "id": "s15",
+   "order": 15,
+   "phase": "Evaluate",
+   "title": "FDB-v3, held-out tools, When2Call and SpeechFCEval",
+   "status": "todo"
+  }
+ ]
+}

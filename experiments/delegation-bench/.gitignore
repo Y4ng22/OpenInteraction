@@ -1,0 +1,4 @@
+audio/
+results/*.jsonl
+results/*.csv
+results/speechfc/

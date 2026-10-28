@@ -7,6 +7,7 @@
 | [`MiniCPM/`](MiniCPM/) | 保留原样 | 原有 MiniCPM-o 实现、脚本和测试整体移入；不在本仓库下载模型或权重。 |
 | [`Qwen-Omni/`](Qwen-Omni/) | 开发与验证中 | Qwen3.8 Omni Flash Realtime 前台、qwen-plus 后台、qwen-audio-agent Gateway 和 DeepSeek Harness。 |
 | [`Self-Developed/`](Self-Developed/) | 原型保留 | 原仓库已有的 InteractFormer S1/S2、Bridge 与调度代码已原样复制；模型接口尚未确定，不新增适配。 |
+| [`experiments/`](experiments/) | 实验记录 | 每个实验一个文件夹：代码、方法与结果说明、评分报告（FDB-v3 端到端、委派测试集、委派训练）。 |
 
 MiniCPM 的原使用说明位于 [`MiniCPM/README.md`](MiniCPM/README.md)。Qwen 路线的配置、启动和已知限制见 [`Qwen-Omni/README.md`](Qwen-Omni/README.md)。自研原型说明见 [`Self-Developed/README.md`](Self-Developed/README.md)。MiniCPM 中的 InteractFormer 文件保留原状以维护已有运行路径；自研目录是其未经修改的源码副本。运行 MiniCPM 脚本时，请先切换到 `MiniCPM/`，以保留原有相对路径行为。
 

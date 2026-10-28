@@ -1,0 +1,106 @@
+# Delegation training data: labeling rules and acceptance
+
+The writing instructions given to the outside model are in `writer_tasks/PROMPT.md` (the ready-to-paste versions
+are `writer_tasks/prompts/prompt_###.md`). This file states what the labels mean and when the data is accepted.
+
+## 1. Labeling rules
+
+### What is input and what is the label
+
+- **Input**: the user's request (plus one or two earlier exchanges when `with_context` is set). It is turned into
+  speech at the TTS step.
+- **Label**: what the voice model must do on that turn. The label is fixed first, by the task plan; the outside
+  model then writes a request that fits it. Requests are never labeled after the fact.
+
+### Which tools the voice model has
+
+- Every tool carries a time label. A tool is **fast** when both timing prompts estimate it at 0.5 s or less;
+  otherwise it is **slow** (or uncertain, treated as slow). 383 labels were corrected by hand.
+- Fast tools are the voice model's own (frontend) tools. Slow tools exist only in the backend.
+- Held-out domains (health, food, calendar, weather, real_estate, jobs) are used only in dev/test.
+
+### The five targets
+
+Decided in this order for each user turn:
+
+| Order | Situation | Target | Label |
+|---|---|---|---|
+| 1 | No tool and no outside information needed (small talk, joke, opinion, stable knowledge). Weather, news, prices and schedules never count. | `chat` | `reply` |
+| 2 | A required value that only the user can decide is missing. Values the backend can look up are not missing. | `ask` | one short `question`; after the user's answer, the call or handoff with that value |
+| 3 | Everything needed is covered by the voice model's own fast tools. | `call` | `calls` |
+| 4 | It needs a backend capability (any slow step, including multi-step chains with one slow step). | `handoff` | `spawn_thinking(objective)` plus a spoken `say` |
+| 5 | Two independent requests in one turn: one fast, one backend. | `split` | `calls` for the fast part and `spawn_thinking(objective)` plus `say` for the rest |
+
+Planned shares: call 35%, handoff 30%, ask 15%, chat 10%, split 10%.
+
+### Rules for the label fields
+
+- `calls` arguments come only from what the user said (request, context or answer). Optional arguments the user did
+  not mention are left out. Format changes are allowed ("$240,000" to 240000, "October" to 10).
+- `backend_calls` may contain values the backend looks up. They are kept as a reference and are not a training
+  target for the voice model.
+- `objective` is one sentence for the backend. It repeats every value the user gave, exactly, and invents none.
+- `say` acknowledges the handoff. It never claims the task is done, never says the assistant cannot help, and never
+  mentions a human agent. Its opening varies.
+- The assistant never says it cannot do something: anything it cannot do itself, it hands off.
+- About 20% of samples are full (`full`): they also have the tool `results` or `backend_result`, and the final
+  `answer`, which must use concrete values from that result.
+- Everything is in English.
+
+### How the user talks
+
+- `plain` (about 84%): fluent speech.
+- `filler` (about 10%): one or two hesitations in the request ("um", "uh", "I mean", "let me think"). The label is
+  unchanged, and no filler may appear in `calls`, `objective` or `say`.
+- `self_correction` (about 5%; not for chat): the user changes a value mid-sentence ("Tuesday, no wait,
+  Wednesday"). The label uses only the corrected value; the answer records `"revised": {"from", "to"}`.
+- Pauses inside an utterance are added at the TTS step (silence at phrase boundaries in about 30% of samples), not
+  in the text. The voice model must keep listening through them.
+- Batches 000 and 001 were written before speech styles existed and are all plain.
+
+### Out of scope
+
+- Turns after the handoff (status questions, repeated handoffs): the task id already solves repeated handoffs.
+- Latent communication between the voice model and the backend: a separate study.
+
+## 2. Acceptance
+
+### A. Every sample (automatic, `import_writer_answers.py`; a failing sample is dropped)
+
+| Check | Rejects |
+|---|---|
+| Schema | unknown tool, argument not in the schema, missing required argument, backend calls that differ from the plan |
+| Grounding | a `calls` value the user never said ("made-up value") |
+| Objective | an objective that drops a user value, adds one the user never gave, or contains `$RESULT` |
+| Naturalness | tool name (4+ words) in the request, request that copies the tool description, context that repeats the request, filler values such as "standard", placeholders such as `$USER_ID` or `<id>` |
+| Acknowledgment | `say` longer than 25 words or claiming the task is done |
+| Ask | question missing a "?", copying the request, or the request already giving the missing value |
+| Full samples | missing results, an answer longer than 60 words, an answer with no value from the results |
+| Speech | filler sample without a filler, a filler in the label, self-correction without `revised`, or a label that keeps the first value |
+| Duplicates | the same request twice, a dev/test request that also appears in train |
+
+### B. Every batch (checked as each batch comes back)
+
+- At least 85% of the batch passes.
+- All scenarios differ, and no `say`, context line or question repeats more than twice.
+- At most 50% of `say` lines start with "I'll".
+- At least 80% of speech-tagged tasks pass.
+
+If a batch misses one of these, the prompt is adjusted before more batches are run.
+
+### C. The whole dataset (before your review)
+
+- At least 13,000 kept: train ≥ 11,800, dev ≥ 600, test ≥ 600.
+- Each target's share is within 3 points of the plan (35 / 30 / 15 / 10 / 10).
+- Filler ≥ 8% and self-correction ≥ 4% of batches 002 to 153.
+- No line appears 20 or more times, and no request repeats, including across train/dev/test.
+
+### D. Your review (the gate before TTS and training)
+
+- A stratified sample: 50 per target (250 in all) plus 30 speech-tagged samples, shown with their scenarios.
+- For each sample: is the target right, are the label fields correct, is the objective faithful, does the request
+  sound like a person?
+- Pass: at least 95% have the right target and at least 90% are fully correct. Otherwise the cause is fixed and the
+  affected samples are checked again.
+
+Only after D passes, and with your go-ahead, do TTS, MiniCPM-o formatting, the baseline and training start.

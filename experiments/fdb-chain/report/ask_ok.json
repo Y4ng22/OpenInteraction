@@ -1,0 +1,11 @@
+{
+  "_note": "FDB-v3 scenarios whose gold calls search_apartments without a required argument the user never gave. At evaluation, a question asking for one of the listed values also counts as correct. housing_24 and housing_25 set the budget through update_search_filter, so only bedrooms is missing there.",
+  "housing_04": ["max_price"],
+  "housing_05": ["bedrooms"],
+  "housing_15": ["max_price"],
+  "housing_20": ["bedrooms"],
+  "housing_21": ["city", "max_price"],
+  "housing_22": ["max_price"],
+  "housing_24": ["bedrooms"],
+  "housing_25": ["bedrooms"]
+}

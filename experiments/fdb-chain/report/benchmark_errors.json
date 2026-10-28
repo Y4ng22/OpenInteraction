@@ -1,0 +1,9 @@
+{
+  "ecommerce_12": "gold passes `category`, an argument search_products does not have",
+  "housing_05": "gold passes `pets_allowed`, an argument search_apartments does not have",
+  "housing_14": "gold passes `pets_allowed`, an argument search_apartments does not have",
+  "housing_15": "gold passes `pets_allowed`, an argument search_apartments does not have",
+  "housing_08": "gold wants filter_name `pets_allowed`, a key the schema never names (filter_name is free text)",
+  "travel_02": "gold passport number P9-9-9-90011 contradicts the recording (P-8-8-9-9-0-0-1-1)",
+  "travel_20": "user books only if under $300; the only flight is $450, yet gold expects book_flight"
+}
