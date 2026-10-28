@@ -8,15 +8,25 @@ status: running
 
 **Goal.** Teach MiniCPM-o 4.5 to decide, on every user turn and in full duplex, between answering directly, calling one of its own fast tools, asking for a missing value, and handing the request to the backend with `spawn_thinking`. MiniCPM-o already holds full-duplex conversations, but in our tests it never emitted a function call (0 of 20), so tool calling and the handoff decision are trained together.
 
-## The split: Qwen-Audio-Agent's design
+## The split: fast tools in the frontend, the rest handed off
 
-The voice model keeps only fast tools, those that answer in 0.5 s or less, and hands everything else to the backend. Independent requests in one turn are split: the fast part is done at once, the rest is handed off. The voice model never says it cannot do something. This follows the [Qwen-Audio-Agent report](https://arxiv.org/abs/2609.25195), where letting the voice model decide per request gave the highest task success (91.0%) and the lowest latency.
+The voice model holds only fast tools, those expected to answer in 0.5 s or less, and hands everything else to the backend. Independent requests in one turn are split: the fast part is done at once, the rest is handed off. The voice model never says it cannot do something.
+
+How this relates to [Qwen-Audio-Agent](https://arxiv.org/abs/2609.25195):
+
+| | Qwen-Audio-Agent | Ours |
+| --- | --- | --- |
+| Who decides which tools the frontend holds | The developer, per domain, in their cockpit app (`surface-routing.json`: vehicle, navigation, music and weather in the frontend; shopping in the backend) | The tool's expected execution time (0.5 s or less goes to the frontend), so unseen tools can be placed too |
+| Their best benchmark setting (91.0% task success, lowest latency) | Frontend and backend hold the **same** 41 tools; the frontend picks a path per request, with no explicit rule or latency threshold | Not used: prompted this way, Fun-Audio-Chat holding all 12 FDB tools handed off 1 of 100 requests |
+| Latency they measured | Tool result 1.48 s when the frontend calls directly, 3.56 s when delegated | The 0.5 s line is our own, conservative choice |
+
+So the split follows Qwen's deployed app, with time in place of domain, and the model learns: use your own tools when they cover the request, otherwise hand off. Training the frontend to choose between two paths with the same tools, as in Qwen's best setting, is a possible later ablation.
 
 ## Data
 
 No public dataset labels "do it myself" versus "hand it off", so we build one: 15,400 samples (train 14,000, dev 700, test 700) over 14,168 real tool definitions from When2Call and ToolACE.
 
-1. **Tool time labels.** Each tool is labeled fast or slow from its expected execution time: Qwen3-14B estimates it under two prompts; on FDB-v3's 12 tools the labels were 12 of 12 correct, and 383 labels were corrected by hand. Six whole domains (health, food, calendar, weather, real_estate, jobs) are held out for dev and test.
+1. **Tool time labels.** Each tool is labeled fast or slow from its expected execution time: Qwen3-14B estimates it under two prompts, and tools whose two estimates disagree are left out. On FDB-v3's 12 tools the labels were 12 of 12 correct, and 383 labels were corrected by hand. Six whole domains (health, food, calendar, weather, real_estate, jobs) are held out for dev and test.
 2. **Targets first.** Each sample's target and tools are fixed before any text is written: call 35%, handoff 30%, ask 15%, chat 10%, split 10%. About 20% also carry the tool or backend result and the final spoken answer.
 3. **Requests written to fit.** An outside model imagines a concrete scene and writes the request, earlier turns, objective and acknowledgment. About 10% of requests carry fillers ("um", "I mean") and 5% a self-correction ("Tuesday, no wait, Wednesday"), where the label uses only the corrected value.
 4. **Checks.** Every sample passes automatic checks: call values must come from what the user said, objectives repeat every value and invent none, acknowledgments never claim the task is done, no tool names in requests, no duplicates across splits. Full rules and acceptance criteria are in `DATA_SPEC.md` on the experiments branch.

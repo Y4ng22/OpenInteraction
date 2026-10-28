@@ -75,13 +75,13 @@
     },
     {
       "id": "s08",
-      "note": "77 of 154 batches written (000-076) and 71 checked, keeping 7,086 of 7,100. Batches 002-070 lost 1 sample in 6,900; batches 071-076 are written but not checked yet. Kept so far, from 002 on: call 2,444, handoff 2,097, ask 972, chat 700, split 686. Speech styles: 669 filler, 375 self-correction. Progress is read from DelegationSet/answers and DelegationSet/checked on the user's machine.",
+      "note": "87 of 154 batches written (000-086) and 79 checked (000-078), keeping 7,886 of 7,900. Batches 079-086 are written but not checked yet; no batch is below 95. Kept so far, from 002 on: call 2,702, handoff 2,325, ask 1,112, split 786, chat 774. Speech styles: 748 filler, 411 self-correction.",
       "order": 9,
-      "pct": 73,
+      "pct": 76,
       "phase": "Data",
       "status": "running",
-      "title": "Requests and targets, Qwen-Audio-Agent split",
-      "updated": "2026-10-28T17:01:54Z"
+      "title": "Requests and targets (fast tools in the frontend, the rest handed off)",
+      "updated": "2026-10-28T17:10:36Z"
     },
     {
       "id": "s09",

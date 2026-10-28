@@ -1,8 +1,8 @@
-"""Expected execution time per tool, from Qwen3-14B, for the Qwen-Audio-Agent style split.
+"""Expected execution time per tool, from Qwen3-14B, to decide which tools the voice frontend holds.
 
-Following Qwen-Audio-Agent, a tool either belongs to the voice frontend (it answers quickly) or to the backend
-(slow or multi-system work). Qwen assigns whole domains by measured latency; our pool has no measurements, so
-Qwen3-14B estimates each tool's typical time from call to result, and tools at or under --limit-s seconds go to
+A tool either belongs to the voice frontend (it answers quickly) or to the backend (slow or multi-system work).
+Qwen-Audio-Agent's cockpit app assigns whole domains by hand; our pool is too large for that and has no
+measurements, so Qwen3-14B estimates each tool's typical time from call to result, and tools at or under --limit-s seconds go to
 the frontend. The estimate is asked twice with different wording; tools whose two answers fall on different sides
 of the limit are marked unsure and kept out of training. Resumable.
 

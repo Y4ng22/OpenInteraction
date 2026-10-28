@@ -15,7 +15,7 @@ are `writer_tasks/prompts/prompt_###.md`). This file states what the labels mean
 ### Which tools the voice model has
 
 - Every tool carries a time label. A tool is **fast** when both timing prompts estimate it at 0.5 s or less;
-  otherwise it is **slow** (or uncertain, treated as slow). 383 labels were corrected by hand.
+  otherwise it is **slow**. Tools whose two estimates disagree are left out. 383 labels were corrected by hand.
 - Fast tools are the voice model's own (frontend) tools. Slow tools exist only in the backend.
 - Held-out domains (health, food, calendar, weather, real_estate, jobs) are used only in dev/test.
 

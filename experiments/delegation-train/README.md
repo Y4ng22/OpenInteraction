@@ -1,8 +1,9 @@
 # Delegation training: teaching the voice model when to hand off
 
 **In short:** no public dataset labels "do it myself" versus "hand it to the backend", so we build one: 15,400
-requests over 14,168 real tool definitions, following the Qwen-Audio-Agent split (the voice model keeps only fast
-tools, ≤ 0.5 s, and hands everything else to the backend). Each tool is labeled fast or slow, each sample's target is
+requests over 14,168 real tool definitions, with the voice model holding only fast tools (≤ 0.5 s) and handing everything else to the backend. This
+follows how Qwen-Audio-Agent's cockpit app places tools (by hand, per domain), with expected time in place of
+domain; the 0.5 s line is our own. Each tool is labeled fast or slow, each sample's target is
 fixed first, and an outside model writes a request that fits it. So far, 2 of 154 batches are written and checked
 (187 of 200 samples pass). A 10-sample smoke test showed LoRA training fits on the lab's 16 GB cards. Training has not
 started: it waits until the data passes review.
@@ -29,7 +30,7 @@ above after its requests turned out to name tools and make up values; its checks
 
 ### Tools and their time labels
 
-| | Tools | Fast | Slow | Uncertain (treated as slow) |
+| | Tools | Fast | Slow | Unsure (left out) |
 | --- | --- | --- | --- | --- |
 | All | 14,168 | 12,418 | 1,068 | 682 |
 | Train domains | 12,506 | 11,055 | 860 | rest |

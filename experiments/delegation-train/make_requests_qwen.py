@@ -1,4 +1,4 @@
-"""Delegation samples for the Qwen-Audio-Agent split, written by Qwen3-14B and checked against the schemas.
+"""Delegation samples (fast tools in the frontend, the rest handed off), written by Qwen3-14B and checked.
 
 The voice frontend holds only fast tools (expected time 0.5 s or less, label_time.py plus the hand review) and
 spawn_thinking; slow tools belong to the backend and never appear in the frontend's list. Each sample is one of:
@@ -245,8 +245,8 @@ def surface_prompt(p, out1, tools):
 
 
 def check_backend_objective(objective, backend_calls, said):
-    """The backend fills in what the user did not say (Qwen-Audio-Agent: what tools can find out is left to the
-    backend), so backend_calls may hold values the user never gave. The objective must not: it carries the
+    """The backend fills in what the user did not say (as in Qwen-Audio-Agent, what tools can find out is
+    left to the backend), so backend_calls may hold values the user never gave. The objective must not: it carries the
     user's values verbatim and nothing invented."""
     check_objective(objective, backend_calls, said)
     text = objective.lower()
