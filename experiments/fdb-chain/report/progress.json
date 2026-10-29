@@ -75,13 +75,13 @@
     },
     {
       "id": "s08",
-      "note": "87 of 154 batches written (000-086) and 79 checked (000-078), keeping 7,886 of 7,900. Batches 079-086 are written but not checked yet; no batch is below 95. Kept so far, from 002 on: call 2,702, handoff 2,325, ask 1,112, split 786, chat 774. Speech styles: 748 filler, 411 self-correction.",
+      "note": "Done: all 154 batches written and checked, with the 28 edited batches re-checked; 15,383 of 15,400 kept. Kept, from 002 on: call 5,238, handoff 4,579, ask 2,241, split 1,593, chat 1,545. Speech styles: 1,519 filler, 821 self-correction. Next: your review of a sample before anything uses the data.",
       "order": 9,
-      "pct": 76,
+      "pct": 100,
       "phase": "Data",
-      "status": "running",
+      "status": "done",
       "title": "Requests and targets (fast tools in the frontend, the rest handed off)",
-      "updated": "2026-10-28T17:10:36Z"
+      "updated": "2026-10-28T23:11:14Z"
     },
     {
       "id": "s09",

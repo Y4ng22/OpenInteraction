@@ -104,3 +104,47 @@ If a batch misses one of these, the prompt is adjusted before more batches are r
   affected samples are checked again.
 
 Only after D passes, and with your go-ahead, do TTS, MiniCPM-o formatting, the baseline and training start.
+
+## 3. Fix pass after the whole-dataset review (2026-10-29)
+
+A review of all 15,383 kept samples found no structural errors (targets, tool speeds, held-out domains and splits
+are all consistent) but several content problems. They are fixed as follows.
+
+### Dropped (no rewrite)
+
+| Problem | Samples |
+|---|---|
+| The same request twice (case and punctuation ignored) | 4 |
+| A request to show an image, photo or video, which a voice assistant cannot do | 79 |
+
+### Rewritten by the outside writer (`export_fix_tasks.py`, checked with `import_writer_answers.py --fixes`)
+
+| Fix | Samples | What changes |
+|---|---|---|
+| `ask_lookup` | 440 | The question asked for an internal id (match id, season id, image id) a person would not know. It now asks for what the person knows (a name, the teams and date, a title); after the answer the assistant hands off, and the backend finds the id. |
+| `new_chat` | 148 | A chat request on a topic other chat samples already use (why a baker's dozen is 13, crocodile versus alligator) gets a new topic. |
+| `numbers` | 118 | A number reused across many requests (9876543210 appeared 29 times) is replaced everywhere in the sample. |
+| `full_split` | 311 | About 20% of split samples get the fast tool's result and an answer that relays it and says the backend part is still going. |
+| `context` | 1,803 | The assistant's context line no longer ends with a question, bringing that share from 93.5% to about 60%. |
+| `filler_add` | 600 | Plain requests get "you know", "I mean", "like", "kind of" or "well" (um and uh are already common). |
+
+If a fix fails its checks, the original is kept, except for `ask_lookup` and `new_chat`, whose originals are
+removed. `merge_fixes.py` builds the final set and reports section C again.
+
+### Decided at formatting (no data change)
+
+- **Split decisions are silent.** The decision turn of every split sample keeps the tool call and the handoff and
+  drops `say`, as in call samples: the fast result arrives within 0.5 s, and the answer that follows it covers
+  both parts. This also removes 306 acknowledgments that said "Here's ..." before any result existed.
+- **The current time is in the system prompt** ("Current time: Wednesday, October 28, 2026, 3:40 pm"). Samples
+  whose labels hold dates get the date the labels imply (mostly 2026-10-28); the rest get random dates, so the
+  model reads the line instead of memorizing one date. At inference the harness fills in the real time. This
+  grounds the 205 samples whose labels add the year 2026 to a spoken "October 24".
+- **Codes are lowercased** in the request and every label (for example `kJQP7kiw5Fk`), since case cannot be heard;
+  TTS reads them character by character.
+
+### Kept as they are
+
+- Objectives that say "the user" (219): the backend works for the user, so this is fine.
+- Short call values that appear only inside another word (109): almost all are format changes the tool needs
+  ("Kenya" to `KE`, "English" to `en`).

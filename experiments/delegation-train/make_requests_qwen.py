@@ -9,12 +9,14 @@ spawn_thinking; slow tools belong to the backend and never appear in the fronten
   split    two independent requests in one turn, one the frontend can do and one it cannot: it calls its tool
            and hands the other part off
   ask      a value only the user can decide is missing: a short question; half of these also carry the user's
-           answer and the call or handoff that follows
+           answer and the call or handoff that follows. A "lookup" ask (fix pass) asks for what the user knows
+           (a name, the teams and date) instead of an internal id, and then hands off so the backend finds the id
   chat     no tool is needed: a short spoken reply
 Each sample takes two calls to the teacher: the first sees the tools and fixes the structure (calls, values,
 results); the second writes every spoken line from a short intent and the values alone, never seeing a tool
 description, so requests cannot be reworded descriptions. About 20% of call and handoff samples are "full": they go on past the decision with a mock tool result (or the
-backend's result) and the spoken answer that relays it. The rest end at the decision.
+backend's result) and the spoken answer that relays it; in the fix pass about 20% of split samples get the fast
+tool's result and an answer that relays it and says the backend part is still going. The rest end at the decision.
 
 Samples are stored model-neutral as a list of events, so the same data converts to Fun-Audio-Chat or to
 MiniCPM-o's duplex streams later:
@@ -43,6 +45,11 @@ FULL_SHARE = 0.2
 # an acknowledgment must not announce the user's task as finished before the backend reports back
 CLAIMS_DONE = re.compile(r"\b(done|completed|booked|ordered|reserved|added|scheduled|placed|paid|transferred|"
                          r"cancel+ed|submitted|all set)\b", re.I)
+# after a full split's fast result, the answer says the backend part is still going
+PENDING = re.compile(r"\b(still|working on|looking into|checking|underway|on it|in progress|on its way|"
+                     r"shortly|soon|let you know|get back|meanwhile|while|being)\b", re.I)
+# people do not know internal ids (match, season, image ...); a lookup ask asks for what they know instead
+ASKS_ID = re.compile(r"\b(ID|IDs|[Ii]dentifier|UUID|uuid)\b")
 
 TEACHER = """You write training data for a voice assistant. Output JSON only.
 
@@ -341,7 +348,17 @@ def build(p, out, tools):
         check_say(out.get("say"))
         events.append({"role": "assistant", "calls": out.get("calls", []) if p["target"] == "split" else [],
                        "objective": out["objective"], "say": out["say"], "backend_calls": out["backend_calls"]})
-        if p["full"]:
+        if p["full"] and p["target"] == "split":
+            # the fast result is back in under 0.5 s: relay it and say the backend part is still going
+            results = out.get("results")
+            if not isinstance(results, list) or len(results) != len(out["calls"]):
+                raise ValueError("results")
+            check_answer(out.get("answer"), results)
+            if not PENDING.search(out["answer"]):
+                raise ValueError("split answer does not say the backend part is still going")
+            events += [{"role": "tool", "name": c["name"], "result": r} for c, r in zip(out["calls"], results)]
+            events.append({"role": "assistant", "calls": [], "objective": None, "say": out["answer"]})
+        elif p["full"]:
             backend_result = out.get("backend_result", "")
             if len(backend_result.split()) < 4:
                 raise ValueError("backend result")
@@ -356,18 +373,23 @@ def build(p, out, tools):
         q, r = set(re.findall(r"\w+", question.lower())), set(re.findall(r"\w+", request.lower()))
         if len(q & r) > 0.8 * len(q):
             raise ValueError("question copies the request")
-        key = "backend_calls" if slow else "calls"
+        if p.get("lookup") and ASKS_ID.search(question):
+            raise ValueError("question asks for an id")
+        # lookup: the user names the thing, the backend finds its id and runs the tool
+        key = "backend_calls" if slow or p.get("lookup") else "calls"
         check_calls(out.get(key), by_name, slow or fast)
         if p["missing"] not in out[key][0]["arguments"]:
             raise ValueError("follow-up lacks the missing value")
         if shown(out[key][0]["arguments"][p["missing"]]) in said:
             raise ValueError("request already gives the missing value")
+        if p.get("lookup") and shown(out[key][0]["arguments"][p["missing"]]) in answer.lower():
+            raise ValueError("the user's answer gives the id")
         events.append({"role": "assistant", "calls": [], "objective": None, "say": question})
         if p["followup"]:
             if not answer.strip() or len(answer.split()) > 70:  # a reply to a question may be one word ("Seattle.")
                 raise ValueError("answer length")
             events.append({"role": "user", "text": answer})
-            if slow:
+            if slow or p.get("lookup"):
                 check_backend_objective(out.get("objective"), out[key], said + " " + answer.lower())
                 check_say(out.get("say"))
                 events.append({"role": "assistant", "calls": [], "objective": out["objective"], "say": out["say"],

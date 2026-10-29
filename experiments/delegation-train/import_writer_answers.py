@@ -6,6 +6,9 @@ by task type and reason, with a few examples per reason in --report.
 
     python import_writer_answers.py --tools tools_split.jsonl --time tool_time_reviewed.jsonl \
         --answers delegation_samples.jsonl --out requests_writer.jsonl --report import_report.json
+
+Fix pass: add --fixes fixes.jsonl --originals answers_*.jsonl. Each corrected answer must also pass check_fix (the
+fields it may not change, and what its fix must change); full_split and ask_lookup plans are adjusted to match.
 """
 import argparse
 import collections
@@ -19,6 +22,38 @@ from make_requests_qwen import SIZES, build, load_tools, plan
 
 FILLER = re.compile(r"\b(um+|uh+|hmm+|erm|i mean|let me think|you know)\b")
 HESITATION = re.compile(r"\b(um+|uh+|hmm+|erm)\b")
+FILLER_ADD = re.compile(r"\b(you know|i mean|like|kind of|sort of|well)\b")
+
+# Fix pass (export_fix_tasks.py): the writer returns the whole corrected answer; these fields must come back as they were
+UNCHANGED = {
+    "full_split": ("context", "request", "calls", "backend_calls", "objective"),
+    "ask_lookup": ("context", "request"),
+    "context": ("calls", "backend_calls", "objective", "question"),
+    "numbers": (),
+    "filler_add": ("context", "calls", "backend_calls", "objective", "say", "question", "reply", "answer"),
+    "new_chat": (),
+}
+
+
+def check_fix(fix, a, old):
+    """What each fix must change, beyond the usual checks."""
+    for k in UNCHANGED[fix["fix"]]:
+        if a.get(k) != old.get(k):
+            raise ValueError(f"fix changed {k}")
+    request = (a.get("request") or "").lower()
+    if fix["fix"] == "context":
+        if not a.get("context") or a["context"][-1]["assistant"].strip().endswith("?"):
+            raise ValueError("context line still ends with a question")
+    elif fix["fix"] == "numbers":
+        if fix["old"] in json.dumps(a, ensure_ascii=False):
+            raise ValueError("old number still there")
+    elif fix["fix"] == "filler_add":
+        if len(FILLER_ADD.findall(request)) <= len(FILLER_ADD.findall((old.get("request") or "").lower())):
+            raise ValueError("no filler added")
+    elif fix["fix"] == "new_chat":
+        new, was = set(re.findall(r"[a-z]{3,}", request)), set(re.findall(r"[a-z]{3,}", (old.get("request") or "").lower()))
+        if len(new & was) >= 0.5 * max(len(new | was), 1):
+            raise ValueError("chat topic not changed")
 
 
 def check_speech(style, a):
@@ -49,6 +84,8 @@ def main():
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--report", type=Path, required=True)
     ap.add_argument("--seed", type=int, default=20261028)
+    ap.add_argument("--fixes", type=Path, help="fix pass: fixes.jsonl from export_fix_tasks.py")
+    ap.add_argument("--originals", type=Path, nargs="*", default=[], help="fix pass: the original answers_*.jsonl")
     args = ap.parse_args()
 
     tools = load_tools(args.tools, args.time)
@@ -57,6 +94,18 @@ def main():
         plans.update({p["id"]: p for p in plan(tools, split, size, args.seed + k)})
     for n, p in enumerate(plans.values()):  # same order as export_writer_tasks
         styles[p["id"]] = speech_style(n, p["id"], p["target"])
+    fixes, originals = {}, {}
+    if args.fixes:
+        fixes = {f["id"]: f for f in map(json.loads, args.fixes.read_text(encoding="utf-8").splitlines())}
+        for path in args.originals:
+            originals.update({a["id"]: a for a in map(json.loads, path.read_text(encoding="utf-8").splitlines()) if a.get("id")})
+        for i, f in fixes.items():
+            if f["fix"] == "full_split":
+                plans[i] = {**plans[i], "full": True}
+            elif f["fix"] == "ask_lookup":
+                plans[i] = {**plans[i], "lookup": True}
+            elif f["fix"] == "filler_add":
+                styles[i] = "filler"
     answers = [json.loads(l) for l in args.answers.read_text(encoding="utf-8").splitlines() if l.strip()]
 
     kept, failures, examples = [], collections.Counter(), collections.defaultdict(list)
@@ -67,14 +116,22 @@ def main():
             failures["?", "unknown id"] += 1
             continue
         try:
+            if fixes:
+                if p["id"] not in fixes:
+                    raise ValueError("not a fix task")
+                check_fix(fixes[p["id"]], a, originals[p["id"]])
             row = build(p, a, tools)
-            check_speech(styles[p["id"]], a)
+            if fixes.get(p["id"], {}).get("fix") != "filler_add":
+                check_speech(styles[p["id"]], a)
+            elif HESITATION.search(" ".join(str(v) for v in (a.get("objective"), a.get("say"))).lower()):
+                raise ValueError("filler in the targets")
             text = " ".join(a.get("request", "").lower().split())
             seen[text] += 1
             if seen[text] > 1:
                 raise ValueError("duplicate request")
             kept.append({**row, "writer": "outside", "scenario": a.get("scenario", ""),
-                         "speech": styles[p["id"]], **({"revised": a["revised"]} if a.get("revised") else {})})
+                         "speech": styles[p["id"]], **({"revised": a["revised"]} if a.get("revised") else {}),
+                         **({"fix": fixes[p["id"]]["fix"]} if fixes else {})})
         except Exception as e:
             reason = re.sub(r"[0-9'\"].*", "", str(e)).strip()[:50] or type(e).__name__
             failures[p["target"], reason] += 1
