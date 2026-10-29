@@ -148,3 +148,34 @@ removed. `merge_fixes.py` builds the final set and reports section C again.
 - Objectives that say "the user" (219): the backend works for the user, so this is fine.
 - Short call values that appear only inside another word (109): almost all are format changes the tool needs
   ("Kenya" to `KE`, "English" to `en`).
+
+## 4. Second fix round (2026-10-29)
+
+All 3,420 first-round fixes passed, and the merged set held 15,300 samples. A review of that set found problems the
+checks cannot see. `export_fix_round2.py` handles them.
+
+### Dropped (no rewrite)
+
+| Problem | Samples |
+|---|---|
+| The user says a secret aloud: an API key, password, session cookie, access token or PIN (or the assistant asks for one) | 177 |
+| Text that is not English: Chinese tool values, kanji, or a spoken sentence in another language | 29 |
+| An `ask_lookup` sample whose locked request says the user has the id the question no longer asks for | 11 |
+| A frontend call with `$RESULT_1` as an argument | 10 |
+
+Saying ids, order and tracking numbers, phone numbers, emails, usernames and postal codes aloud is fine and stays.
+Also kept: a password whose strength the user asks about, push device tokens, OTP codes the user sends out,
+pagination tokens and crypto token contracts.
+
+### Rewritten
+
+Chat topics are capped at three samples each (train first). The other 208 chat samples (goldfish names, crocodile
+versus alligator, song goosebumps and similar) get new topics, in three batches with one topic area each. The
+writer sees the 1,349 chat requests that stay, and `import_writer_answers.py --avoid-chats` rejects a new request
+on any of their topics. If a rewrite fails, its sample is removed; even if all 208 fail, the set keeps 14,865
+samples and passes section C.
+
+### Left as they are
+
+Reused looked-up ids (17 for the Premier League in six `ask_lookup` samples) are realistic. A phone number that
+still appears in five requests is under the repetition limit.

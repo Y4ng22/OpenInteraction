@@ -9,6 +9,8 @@ by task type and reason, with a few examples per reason in --report.
 
 Fix pass: add --fixes fixes.jsonl --originals answers_*.jsonl. Each corrected answer must also pass check_fix (the
 fields it may not change, and what its fix must change); full_split and ask_lookup plans are adjusted to match.
+Second round (export_fix_round2.py): add --avoid-chats chat_requests_kept.txt, and a new_chat request on the topic of
+any of those lines is rejected.
 """
 import argparse
 import collections
@@ -16,6 +18,7 @@ import json
 import re
 from pathlib import Path
 
+from export_fix_round2 import chat_topic, same_topic
 from export_writer_tasks import speech_style
 from make_requests import scalars, shown
 from make_requests_qwen import SIZES, build, load_tools, plan
@@ -86,6 +89,7 @@ def main():
     ap.add_argument("--seed", type=int, default=20261028)
     ap.add_argument("--fixes", type=Path, help="fix pass: fixes.jsonl from export_fix_tasks.py")
     ap.add_argument("--originals", type=Path, nargs="*", default=[], help="fix pass: the original answers_*.jsonl")
+    ap.add_argument("--avoid-chats", type=Path, help="second round: chat requests whose topics a new_chat must avoid")
     args = ap.parse_args()
 
     tools = load_tools(args.tools, args.time)
@@ -106,6 +110,7 @@ def main():
                 plans[i] = {**plans[i], "lookup": True}
             elif f["fix"] == "filler_add":
                 styles[i] = "filler"
+    avoid = [(l, chat_topic(l)) for l in args.avoid_chats.read_text(encoding="utf-8").splitlines() if l.strip()] if args.avoid_chats else []
     answers = [json.loads(l) for l in args.answers.read_text(encoding="utf-8").splitlines() if l.strip()]
 
     kept, failures, examples = [], collections.Counter(), collections.defaultdict(list)
@@ -120,6 +125,11 @@ def main():
                 if p["id"] not in fixes:
                     raise ValueError("not a fix task")
                 check_fix(fixes[p["id"]], a, originals[p["id"]])
+                if avoid and fixes[p["id"]]["fix"] == "new_chat":
+                    t = chat_topic(a.get("request") or "")
+                    hit = next((l for l, u in avoid if same_topic(t, u)), None)
+                    if hit:
+                        raise ValueError(f"chat topic already used: {hit}")
             row = build(p, a, tools)
             if fixes.get(p["id"], {}).get("fix") != "filler_add":
                 check_speech(styles[p["id"]], a)

@@ -5,7 +5,7 @@ requests over 14,168 real tool definitions, with the voice model holding only fa
 follows how Qwen-Audio-Agent's cockpit app places tools (by hand, per domain), with expected time in place of
 domain; the 0.5 s line is our own. Each tool is labeled fast or slow, each sample's target is
 fixed first, and an outside model writes a request that fits it. All 154 batches are written and checked
-(15,383 of 15,400 samples pass), and a fix pass for the problems a whole-dataset review found is under way. A 10-sample smoke test showed LoRA training fits on the lab's 16 GB cards. Training has not
+(15,383 of 15,400 samples pass), and two fix passes for the problems the reviews found are under way (the first is done). A 10-sample smoke test showed LoRA training fits on the lab's 16 GB cards. Training has not
 started: it waits until the data passes review.
 
 The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md). The writing prompt is
@@ -22,6 +22,7 @@ The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md)
 | 5. Plan every sample (target, tools, context, speech style) and export writing tasks | `make_requests_qwen.py`, `export_writer_tasks.py` | `writer_tasks/` (tasks, batches, ready-to-paste prompts) |
 | 6. Check the written answers and keep the ones that pass | `import_writer_answers.py` | `requests_writer_*.jsonl`, `import_report_*.json` |
 | 7. Fix pass: pick samples to drop or rewrite, check the rewrites, merge | `export_fix_tasks.py`, `import_writer_answers.py --fixes`, `merge_fixes.py` | `fixes/`, `delegation_final.jsonl` |
+| 8. Second round: drop secrets said aloud and non-English text, give repeated chat topics new ones | `export_fix_round2.py`, `import_writer_answers.py --avoid-chats`, `merge_fixes.py` | `check/fixround2/` |
 | Smoke test of training | `make_smoke.py`, `run_smoke.sh`, `configs/` | `smoke/` |
 
 `make_requests.py` is the first, Qwen3-14B-written generator (v1). It was replaced by the plan-then-write pipeline
@@ -77,9 +78,9 @@ The main line has since moved from Fun-Audio-Chat-8B to MiniCPM-o 4.5, which alr
 
 ## Next
 
-1. All 154 batches are written and checked (15,383 kept). A whole-dataset review found content problems; the fix
-   pass in `DATA_SPEC.md` section 3 drops 83 samples and sends 3,420 back to the writer in 35 fix batches
-   (`export_fix_tasks.py`, then `import_writer_answers.py --fixes` and `merge_fixes.py`).
+1. All 154 batches are written and checked (15,383 kept). The first fix pass (`DATA_SPEC.md` section 3) dropped
+   83 samples and rewrote 3,420, all of which passed (15,300 kept). The second round (section 4) drops 227 more and
+   gives 208 repeated chat samples new topics, in 3 writer batches.
 2. Review a stratified sample by hand (the gate in `DATA_SPEC.md`).
 3. Then, each step only after a go-ahead:
    - TTS, with pauses at phrase boundaries;
