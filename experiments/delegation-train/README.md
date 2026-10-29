@@ -26,6 +26,7 @@ The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md)
 | 9. Draw the stratified review sample (DATA_SPEC D) | `make_review_sample.py` | `check/fixround2/review/review_sample.json` |
 | Smoke test of training | `make_smoke.py`, `run_smoke.sh`, `configs/` | `smoke/` |
 | Untrained baseline: MiniCPM-o 4.5 text chat mode on the test split | `baseline/run_baseline.py`, `baseline/score_baseline.py` | `baseline/` |
+| Duplex feasibility test: 200 spoken samples, LoRA, real duplex loop ([`duplex/README.md`](duplex/README.md)) | `duplex/` | `duplex/` |
 
 `make_requests.py` is the first, Qwen3-14B-written generator (v1). It was replaced by the plan-then-write pipeline
 above after its requests turned out to name tools and make up values; its checks are reused.
@@ -99,6 +100,14 @@ a system prompt that states the five behaviors. Greedy decoding with the officia
 - A first run through vLLM (the language model extracted by `baseline/extract_llm.py`) drifted to unrelated topics
   under concurrent requests (19.4% target accuracy) while the official code on the same prompts did not, so those
   outputs were set aside (`baseline/vllm_run/` on the server) and every number above comes from the official code.
+
+### Duplex feasibility test (2026-10-29)
+
+The duplex decoder masks `"\n"` among 6,965 banned tokens, so the chat-mode call format can never come out in full
+duplex. A LoRA on 200 spoken samples, laid out as the duplex loop feeds and decodes them, with calls on one line,
+was enough: on 60 held-out samples streamed through the real duplex loop, the target was right on 52 of 60 (greedy)
+and 54 of 60 (sampling), against 20 of 60 untrained, which never called a tool. Details in
+[`duplex/README.md`](duplex/README.md).
 
 ### Model choice
 
