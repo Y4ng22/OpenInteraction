@@ -98,6 +98,7 @@ If a batch misses one of these, the prompt is adjusted before more batches are r
 ### D. Your review (the gate before TTS and training)
 
 - A stratified sample: 50 per target (250 in all) plus 30 speech-tagged samples, shown with their scenarios.
+  Drawn by `make_review_sample.py` (seed 20261029) from the final set, with the tools each sample had.
 - For each sample: is the target right, are the label fields correct, is the objective faithful, does the request
   sound like a person?
 - Pass: at least 95% have the right target and at least 90% are fully correct. Otherwise the cause is fixed and the

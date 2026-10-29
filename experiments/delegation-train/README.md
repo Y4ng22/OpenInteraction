@@ -23,6 +23,7 @@ The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md)
 | 6. Check the written answers and keep the ones that pass | `import_writer_answers.py` | `requests_writer_*.jsonl`, `import_report_*.json` |
 | 7. Fix pass: pick samples to drop or rewrite, check the rewrites, merge | `export_fix_tasks.py`, `import_writer_answers.py --fixes`, `merge_fixes.py` | `fixes/`, `delegation_final.jsonl` |
 | 8. Second round: drop secrets said aloud and non-English text, give repeated chat topics new ones | `export_fix_round2.py`, `import_writer_answers.py --avoid-chats`, `merge_fixes.py` | `check/fixround2/` |
+| 9. Draw the stratified review sample (DATA_SPEC D) | `make_review_sample.py` | `check/fixround2/review/review_sample.json` |
 | Smoke test of training | `make_smoke.py`, `run_smoke.sh`, `configs/` | `smoke/` |
 
 `make_requests.py` is the first, Qwen3-14B-written generator (v1). It was replaced by the plan-then-write pipeline
