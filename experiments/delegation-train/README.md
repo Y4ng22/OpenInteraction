@@ -82,7 +82,8 @@ The main line has since moved from Fun-Audio-Chat-8B to MiniCPM-o 4.5, which alr
 1. All 154 batches are written and checked (15,383 kept). The first fix pass (`DATA_SPEC.md` section 3) dropped
    83 samples and rewrote 3,420, all of which passed (15,300 kept). The second round (section 4) dropped 227 more
    and gave 208 repeated chat samples new topics; the final set holds 15,073 samples and passes section C.
-2. Review a stratified sample by hand (the gate in `DATA_SPEC.md`).
+2. Review a stratified sample by hand (the gate in `DATA_SPEC.md` section D). The 280-sample review page is ready
+   (verdicts are saved with the page); 0 of 280 reviewed as of 2026-10-29.
 3. Then, each step only after a go-ahead:
    - TTS, with pauses at phrase boundaries;
    - MiniCPM-o duplex formatting;

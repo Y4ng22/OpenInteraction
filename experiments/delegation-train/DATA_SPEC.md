@@ -99,6 +99,7 @@ If a batch misses one of these, the prompt is adjusted before more batches are r
 
 - A stratified sample: 50 per target (250 in all) plus 30 speech-tagged samples, shown with their scenarios.
   Drawn by `make_review_sample.py` (seed 20261029) from the final set, with the tools each sample had.
+- Status (2026-10-29): the review page is ready and the review has not started (0 of 280).
 - For each sample: is the target right, are the label fields correct, is the objective faithful, does the request
   sound like a person?
 - Pass: at least 95% have the right target and at least 90% are fully correct. Otherwise the cause is fixed and the
