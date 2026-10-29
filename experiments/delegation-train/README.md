@@ -72,6 +72,9 @@ above after its requests turned out to name tools and make up values; its checks
 
 ### Untrained baseline (MiniCPM-o 4.5, 2026-10-29)
 
+In full duplex, MiniCPM-o emitted no function call in 20 of 20 FDB-v3 runs (`fdb-chain/report/modules/talk.en.md`),
+so its duplex baseline for call, handoff and split is zero; the numbers below show what its language model can do
+when it is given the tools in turn-based form, which training has to carry into the duplex stream.
 MiniCPM-o's full-duplex mode has no tool-call path, so the baseline uses its simplex chat mode: text input (TTS has
 not run), the model's own chat template, the sample's fast tools plus a `spawn_thinking(objective)` handoff tool, and
 a system prompt that states the five behaviors. Greedy decoding with the official model code on the 692 test samples
