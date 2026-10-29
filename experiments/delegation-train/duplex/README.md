@@ -72,7 +72,27 @@ the first `<|turn_eos|>`).
 - The untrained model talks about doing the task ("I will search for data analyst jobs…") without calling anything.
 - Remaining errors: three handoffs asked a question instead, one call body lost a closing brace, and calls longer
   than 18 tokens delay speech by one to two seconds.
-- With no tool result coming back, the trained model repeats its call after a few silent seconds; the result unit
-  is not tested here.
+- With no tool result coming back, the trained model repeats its call after a few silent seconds (the result test
+  below feeds the result one second after the reply, as in training).
+
+### Result fed back as a text unit
+
+34 test samples that carry a tool or backend result (call 12, handoff 12, split 10), from the same held-out domains.
+After the reply and one silent second, the result goes into the stream as `<tool_response>…</tool_response>`
+(`streaming_prefill(text_list=…)`), and the reply to it is scored (`duplex_test.py --with-result`).
+
+| | Untrained | LoRA |
+| --- | --- | --- |
+| First reply: target right | 0/34 | 29/34 |
+| After the result: tells the user | 19/34 | **33/34** |
+| … with a concrete value from the result | 15/34 | **30/34** |
+| … calls again instead | 0 | 1 |
+
+- Untrained, a handoff result was told in only 5 of 12, and once the model put a Denver forecast in San Francisco.
+- Trained, the reply reads like "Dental hygiene jobs in Ohio rose 9% over the past year. The median salary is
+  $78,400, with the most openings in Columbus and Cincinnati." Split replies give the fast result and say the
+  backend part is still in progress.
+- Of the four without a value, two do use the result but word it so the value check misses it, one stops after
+  "Here are some interview questions to practice:", and one hands off again.
 - A 4-bit QLoRA run on one card reached a similar training loss but ran out of memory in its final evaluation
   before saving (fixed: the adapter is now saved first); it was not tested.

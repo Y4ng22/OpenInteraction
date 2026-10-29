@@ -3,7 +3,9 @@
 Each test item's first spoken turn is streamed in one-second chunks (MiniCPMODuplex.streaming_prefill and
 streaming_generate, greedy unless --decode sampling, no audio output), followed by up to 8 s of silence; the run stops one unit after the
 model ends its turn. Tool calls are cut out of the text stream before it would reach TTS (as in
-fdb-chain/duplex_probe.py). With --lora, the smoke adapter from train_lora.py is merged into the language model
+fdb-chain/duplex_probe.py). With --with-result, the sample's tool or backend result is then fed back as a
+text unit (<tool_response>...</tool_response>, the way training lays it out) and the reply to it is scored. With
+--lora, the smoke adapter from train_lora.py is merged into the language model
 first. The four tokens the training targets use from the duplex decoder's banned list are allowed (--allow).
 
     python duplex_test.py --src <snapshot> --final delegation_final.jsonl --tools tools_split.jsonl \
@@ -80,6 +82,40 @@ def merge_lora(llm, path):
     print(f"merged {n} LoRA pairs (scale {scale})")
 
 
+VALUE = re.compile(r"\$?\d[\d,.:]*%?|\b[A-Z][A-Za-z]*(?:[- ][A-Z0-9][A-Za-z0-9]*)*\b")
+STOP = {"I", "The", "A", "An", "And", "Or", "But", "If", "So", "It", "Your", "You", "Here", "There", "That", "This"}
+
+
+def values(text):
+    return {v.strip(",.").lower() for v in VALUE.findall(text or "") if v not in STOP and len(v.strip(",.")) > 1}
+
+
+def result_text(x):
+    """Every result between the first reply and the next one, as the harness would feed it back."""
+    out, seen_reply = [], False
+    for e in x["events"]:
+        if e.get("context"):
+            continue
+        if e["role"] == "assistant":
+            if seen_reply:
+                break
+            seen_reply = True
+        elif e["role"] == "tool":
+            out.append("<tool_response>" + json.dumps(e["result"], ensure_ascii=False) + "</tool_response>")
+        elif e["role"] == "backend":
+            out.append("<tool_response>" + e["text"] + "</tool_response>")
+    return "".join(out)
+
+
+def judge_report(x, after):
+    spoken, calls = intercept(first_turn(after))
+    spoken = spoken.replace("<|turn_eos|>", "").strip()
+    told = bool(spoken) and not calls
+    return {"answer": spoken, "told": told, "calls_again": bool(calls),
+            "uses_value": told and bool(values(spoken) & values(result_text(x))),
+            "answer_words": len(spoken.split())}
+
+
 def norm(v):
     if isinstance(v, dict):
         return {k: norm(x) for k, x in v.items()}
@@ -137,6 +173,8 @@ def main():
     ap.add_argument("--max-mem-gib", type=int, default=14)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--rescore", action="store_true", help="score <out>.jsonl again without running the model")
+    ap.add_argument("--with-result", action="store_true",
+                    help="after the reply, feed the sample's tool/backend result as a text unit and score what is said")
     args = ap.parse_args()
 
     if args.rescore:
@@ -168,26 +206,47 @@ def main():
         speech, _ = sf.read(m["wavs"][0]["path"], dtype="float32")
         n_speech = int(np.ceil(len(speech) / SR))
         chunks = [speech[i * SR:(i + 1) * SR] for i in range(n_speech)] + [np.zeros(SR, np.float32)] * args.silence_s
-        units, ended_at = [], None
-        for t, chunk in enumerate(chunks):
-            chunk = np.pad(chunk, (0, SR - len(chunk))).astype(np.float32)
-            if not duplex.streaming_prefill(audio_waveform=chunk)["success"]:
-                continue
+        def unit(t, **feed):
+            if not duplex.streaming_prefill(**feed)["success"]:
+                return None
             before = len(duplex.res_ids)
             out = duplex.streaming_generate(decode_mode=args.decode)
             raw = tok.decode(duplex.res_ids[before:], skip_special_tokens=False)
-            units.append({"t": t, "listen": out["is_listen"], "raw": raw, "end_of_turn": out["end_of_turn"]})
-            if out["end_of_turn"] and ended_at is None:
+            return {"t": t, "listen": out["is_listen"], "raw": raw, "end_of_turn": "<|turn_eos|>" in raw}
+
+        units, ended_at = [], None
+        for t, chunk in enumerate(chunks):
+            u = unit(t, audio_waveform=np.pad(chunk, (0, SR - len(chunk))).astype(np.float32))
+            if u is None:
+                continue
+            units.append(u)
+            if u["end_of_turn"] and ended_at is None:
                 ended_at = t
-            if ended_at is not None and t > ended_at:
+            if ended_at is not None and t > ended_at:  # one silent second after the reply, as in training
                 break
+        after = []
+        if args.with_result:
+            result = result_text(x)
+            u = unit(t + 1, text_list=[result])
+            after.append(u)
+            for k in range(args.silence_s):
+                if u["end_of_turn"]:
+                    break
+                u = unit(t + 2 + k, audio_waveform=np.zeros(SR, np.float32))
+                after.append(u)
         spoken, calls = intercept(first_turn(units))
         spoke = [u["t"] for u in units if u["raw"].strip()]
         row = {"id": m["id"], "target": x["target"], "speech_s": n_speech, "first_output_t": spoke[0] if spoke else None,
                "interrupted": bool(spoke) and spoke[0] < n_speech - 1, "spoken": spoken, "raw_calls": calls,
                "units": units, **judge(x, spoken, calls, fast)}
+        if args.with_result:
+            row["result"] = result_text(x)
+            row["after"] = after
+            row.update(judge_report(x, after))
         rows.append(row)
         print(m["id"], x["target"], "->", row["pred"], "|", [n for n, _ in row["calls"]], "|", spoken[:100], flush=True)
+        if args.with_result:
+            print("   after result:", row["told"], row["uses_value"], "|", row["answer"][:120], flush=True)
     args.out.with_suffix(".jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
     report(args, rows)
 
@@ -224,6 +283,14 @@ def report(args, rows):
               f"handoff/split with a spoken acknowledgment: {sum(say)}/{len(say)}",
               f"call JSON that would be spoken: {sum(r['json_in_speech'] for r in rows)}",
               f"spoke before the user finished: {sum(r['interrupted'] for r in rows)}"]
+    if rows and "told" in rows[0]:
+        lines += ["", "After the result came back as a text unit:", "",
+                  "| | items | tells the user | uses a value from the result | ≤ 60 words | calls again |", "|---|---|---|---|---|---|"]
+        for t in ["all"] + TARGETS:
+            rs = [r for r in rows if t in ("all", r["target"])]
+            if rs:
+                lines.append(f"| {t} | {len(rs)} | {sum(r['told'] for r in rs)} | {sum(r['uses_value'] for r in rs)} | "
+                             f"{sum(r['told'] and r['answer_words'] <= 60 for r in rs)} | {sum(r['calls_again'] for r in rs)} |")
     args.out.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines))
 

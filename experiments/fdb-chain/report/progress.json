@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-29T22:01:11Z",
+  "updated": "2026-10-29T23:01:06Z",
   "steps": [
     {
       "id": "s01",
@@ -94,13 +94,13 @@
     },
     {
       "id": "s10",
-      "note": "Feasibility test done. The duplex decoder bans \"\\n\" (6,965 banned tokens), so chat-mode tool calls can never come out in duplex. Format: one unit per second, calls on one line as <tool_call>{...}</tool_call> before speech, results as text units. 200 samples spoken with Kokoro, bf16 LoRA on 2 cards for 20 minutes. On 60 held-out samples through the real duplex loop: target right 52/60 greedy and 54/60 sampling vs 20/60 untrained (which never calls a tool); call 11/12, handoff 9/12, split 10/12, ask 10-12/12, chat 12/12; acknowledgment on every handoff; no call text reaches TTS. Not yet tested: the result unit.",
+      "note": "Feasibility test done. The duplex decoder bans \"\\n\" (6,965 banned tokens), so chat-mode tool calls can never come out in duplex. Format: one unit per second, calls on one line as <tool_call>{...}</tool_call> before speech, results as text units. 200 samples spoken with Kokoro, bf16 LoRA on 2 cards for 20 minutes. On 60 held-out samples through the real duplex loop: target right 52/60 greedy and 54/60 sampling vs 20/60 untrained (which never calls a tool); acknowledgment on every handoff; no call text reaches TTS. Result fed back as a text unit (34 held-out samples): tells the user with a value from the result in 30/34 (untrained 15/34), 33/34 tell the user at all, 1 hands off again.",
       "order": 11,
       "phase": "Data",
       "status": "doing",
       "title": "MiniCPM-o duplex format, training setup and smoke test",
-      "updated": "2026-10-29T22:01:11Z",
-      "pct": 40
+      "updated": "2026-10-29T23:01:06Z",
+      "pct": 50
     },
     {
       "id": "s11",

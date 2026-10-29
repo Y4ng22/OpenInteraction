@@ -106,7 +106,8 @@ a system prompt that states the five behaviors. Greedy decoding with the officia
 The duplex decoder masks `"\n"` among 6,965 banned tokens, so the chat-mode call format can never come out in full
 duplex. A LoRA on 200 spoken samples, laid out as the duplex loop feeds and decodes them, with calls on one line,
 was enough: on 60 held-out samples streamed through the real duplex loop, the target was right on 52 of 60 (greedy)
-and 54 of 60 (sampling), against 20 of 60 untrained, which never called a tool. Details in
+and 54 of 60 (sampling), against 20 of 60 untrained, which never called a tool. When the result was fed back as a
+text unit, it told the user with a value from the result in 30 of 34 (untrained 15 of 34). Details in
 [`duplex/README.md`](duplex/README.md).
 
 ### Model choice
