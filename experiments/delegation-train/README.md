@@ -25,6 +25,7 @@ The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md)
 | 8. Second round: drop secrets said aloud and non-English text, give repeated chat topics new ones | `export_fix_round2.py`, `import_writer_answers.py --avoid-chats`, `merge_fixes.py` | `check/fixround2/` |
 | 9. Draw the stratified review sample (DATA_SPEC D) | `make_review_sample.py` | `check/fixround2/review/review_sample.json` |
 | Smoke test of training | `make_smoke.py`, `run_smoke.sh`, `configs/` | `smoke/` |
+| Untrained baseline: MiniCPM-o 4.5 text chat mode on the test split | `baseline/run_baseline.py`, `baseline/score_baseline.py` | `baseline/` |
 
 `make_requests.py` is the first, Qwen3-14B-written generator (v1). It was replaced by the plan-then-write pipeline
 above after its requests turned out to name tools and make up values; its checks are reused.
@@ -69,6 +70,33 @@ above after its requests turned out to name tools and make up values; its checks
 - The first run's loss was NaN: with text-only targets, the speech head averages its loss over zero tokens.
 - Switching the speech head off in the model config (`enable_audio_invert_tower: false`) fixed it.
 
+### Untrained baseline (MiniCPM-o 4.5, 2026-10-29)
+
+MiniCPM-o's full-duplex mode has no tool-call path, so the baseline uses its simplex chat mode: text input (TTS has
+not run), the model's own chat template, the sample's fast tools plus a `spawn_thinking(objective)` handoff tool, and
+a system prompt that states the five behaviors. Greedy decoding with the official model code on the 692 test samples
+(held-out domains).
+
+| Gold target | n | Right | Mostly confused with |
+| --- | --- | --- | --- |
+| call | 227 | 61.2% | handoff (75): hands off what its own tools can do |
+| handoff | 194 | 84.5% | ask (14), call (9) |
+| ask | 109 | 13.8% | handoff (59), call (34): almost never asks |
+| split | 69 | 49.3% | handoff (22), call (13) |
+| chat | 93 | 62.4% | handoff (25): sends small talk and stable knowledge to the backend |
+| **All** | 692 | **59.2%** | |
+
+- On items with the right target: tool names right 91.9% and names plus arguments exact 75.1% (call/split, 173);
+  the objective keeps every user value in 79.8% (handoff/split, 198).
+- When it hands off it says nothing (spoken acknowledgment present in 0 of 198), which in a voice turn is silence.
+- 19 of 692 replies say it cannot help.
+- Reporting a backend result is already there: on the 31 test handoffs with a backend result, the reply tells the
+  user with a concrete value from the result in 31 of 31 when the result comes right after the handoff, and 30 of 31
+  when one unrelated exchange comes in between. No reply hands off again.
+- A first run through vLLM (the language model extracted by `baseline/extract_llm.py`) drifted to unrelated topics
+  under concurrent requests (19.4% target accuracy) while the official code on the same prompts did not, so those
+  outputs were set aside (`baseline/vllm_run/` on the server) and every number above comes from the official code.
+
 ### Model choice
 
 The main line has since moved from Fun-Audio-Chat-8B to MiniCPM-o 4.5, which already runs in full duplex.
@@ -87,6 +115,6 @@ The main line has since moved from Fun-Audio-Chat-8B to MiniCPM-o 4.5, which alr
 3. Then, each step only after a go-ahead:
    - TTS, with pauses at phrase boundaries;
    - MiniCPM-o duplex formatting;
-   - the untrained baseline;
+   - the untrained baseline (done 2026-10-29 in text chat mode, see above; to be rerun on speech after TTS);
    - LoRA SFT;
    - evaluation on FDB-v3 and the held-out tools.
