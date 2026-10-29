@@ -175,6 +175,13 @@ writer sees the 1,349 chat requests that stay, and `import_writer_answers.py --a
 on any of their topics. If a rewrite fails, its sample is removed; even if all 208 fail, the set keeps 14,865
 samples and passes section C.
 
+### Result
+
+All 208 rewrites passed (written by three agents, one per topic area, with no topic shared between them). The merged
+set (`check/fixround2/merged/delegation_final.jsonl`) holds 15,073 samples: train 13,684, dev 697, test 692; call
+34.6%, handoff 30.1%, ask 14.7%, chat 10.3%, split 10.3%; filler 2,084, self-correction 803. Section C passes, and
+running the round-2 checks again on it finds nothing to drop and no chat topic over the cap.
+
 ### Left as they are
 
 Reused looked-up ids (17 for the Premier League in six `ask_lookup` samples) are realistic. A phone number that
