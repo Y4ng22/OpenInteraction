@@ -11,6 +11,9 @@ Fix pass: add --fixes fixes.jsonl --originals answers_*.jsonl. Each corrected an
 fields it may not change, and what its fix must change); full_split and ask_lookup plans are adjusted to match.
 Second round (export_fix_round2.py): add --avoid-chats chat_requests_kept.txt, and a new_chat request on the topic of
 any of those lines is rejected.
+Ask top-up (export_ask_topup.py): add --plans plans.jsonl to read the plans from that file instead of rebuilding
+them. The writer picks the missing value from `missing_candidates` and returns it as "missing", or returns
+{"id", "skip": "<reason>"} when no required value is one only the user can decide; skips are counted, not kept.
 """
 import argparse
 import collections
@@ -90,14 +93,19 @@ def main():
     ap.add_argument("--fixes", type=Path, help="fix pass: fixes.jsonl from export_fix_tasks.py")
     ap.add_argument("--originals", type=Path, nargs="*", default=[], help="fix pass: the original answers_*.jsonl")
     ap.add_argument("--avoid-chats", type=Path, help="second round: chat requests whose topics a new_chat must avoid")
+    ap.add_argument("--plans", type=Path, help="ask top-up: plans.jsonl from export_ask_topup.py")
     args = ap.parse_args()
 
     tools = load_tools(args.tools, args.time)
     plans, styles = {}, {}
-    for k, (split, size) in enumerate(SIZES.items()):
-        plans.update({p["id"]: p for p in plan(tools, split, size, args.seed + k)})
-    for n, p in enumerate(plans.values()):  # same order as export_writer_tasks
-        styles[p["id"]] = speech_style(n, p["id"], p["target"])
+    if args.plans:
+        plans = {p["id"]: p for p in map(json.loads, args.plans.read_text(encoding="utf-8").splitlines())}
+        styles = {i: p["speech"] for i, p in plans.items()}
+    else:
+        for k, (split, size) in enumerate(SIZES.items()):
+            plans.update({p["id"]: p for p in plan(tools, split, size, args.seed + k)})
+        for n, p in enumerate(plans.values()):  # same order as export_writer_tasks
+            styles[p["id"]] = speech_style(n, p["id"], p["target"])
     fixes, originals = {}, {}
     if args.fixes:
         fixes = {f["id"]: f for f in map(json.loads, args.fixes.read_text(encoding="utf-8").splitlines())}
@@ -120,7 +128,14 @@ def main():
         if p is None:
             failures["?", "unknown id"] += 1
             continue
+        if a.get("skip"):
+            failures[p["target"], "skipped by the writer"] += 1
+            continue
         try:
+            if p.get("candidates") is not None:  # ask top-up: the writer picked the missing value
+                if a.get("missing") not in p["candidates"]:
+                    raise ValueError("missing is not one of the candidates")
+                p = {**p, "missing": a["missing"]}
             if fixes:
                 if p["id"] not in fixes:
                     raise ValueError("not a fix task")

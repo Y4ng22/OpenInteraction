@@ -5,8 +5,9 @@ requests over 14,168 real tool definitions, with the voice model holding only fa
 follows how Qwen-Audio-Agent's cockpit app places tools (by hand, per domain), with expected time in place of
 domain; the 0.5 s line is our own. Each tool is labeled fast or slow, each sample's target is
 fixed first, and an outside model writes a request that fits it. All 154 batches are written and checked
-(15,383 of 15,400 samples pass), and two fix passes for the problems the reviews found are done (15,073 samples remain). A 10-sample smoke test showed LoRA training fits on the lab's 16 GB cards. Training has not
-started: it waits until the data passes review.
+(15,383 of 15,400 samples pass), and three fix passes for the problems the reviews found are done (14,076 samples remain, all spoken and laid out
+as MiniCPM-o full-duplex sequences). A 10-sample smoke test showed LoRA training fits on the lab's 16 GB cards. Training has not
+started: it waits for your go-ahead.
 
 The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md). The writing prompt is
 `writer_tasks/PROMPT.md` (not committed, with the rest of `writer_tasks/`).
@@ -24,6 +25,8 @@ The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md)
 | 7. Fix pass: pick samples to drop or rewrite, check the rewrites, merge | `export_fix_tasks.py`, `import_writer_answers.py --fixes`, `merge_fixes.py` | `fixes/`, `delegation_final.jsonl` |
 | 8. Second round: drop secrets said aloud and non-English text, give repeated chat topics new ones | `export_fix_round2.py`, `import_writer_answers.py --avoid-chats`, `merge_fixes.py` | `check/fixround2/` |
 | 9. Draw the stratified review sample (DATA_SPEC D) | `make_review_sample.py` | `check/fixround2/review/review_sample.json` |
+| 10. Third round: flag API values read aloud, Claude review of every ask and chat, drop, top up asks (DATA_SPEC 5) | `flag_api_speech.py`, `export_ask_topup.py`, `import_writer_answers.py --plans`, `apply_round3.py` | `check/fixround3/merged/delegation_v3.jsonl` |
+| 11. Speak every user turn (Kokoro; spoken dates, pauses in 30% of requests) and build the duplex sequences | `duplex/tts.py --all`, `duplex/build_sequences.py` | `duplex_full/` (`audio/`, `seqs/`) |
 | Smoke test of training | `make_smoke.py`, `run_smoke.sh`, `configs/` | `smoke/` |
 | Untrained baseline: MiniCPM-o 4.5 text chat mode on the test split | `baseline/run_baseline.py`, `baseline/score_baseline.py` | `baseline/` |
 | Duplex feasibility test: 200 spoken samples, LoRA, real duplex loop ([`duplex/README.md`](duplex/README.md)) | `duplex/` | `duplex/` |
@@ -120,14 +123,11 @@ The main line has since moved from Fun-Audio-Chat-8B to MiniCPM-o 4.5, which alr
 
 ## Next
 
-1. All 154 batches are written and checked (15,383 kept). The first fix pass (`DATA_SPEC.md` section 3) dropped
-   83 samples and rewrote 3,420, all of which passed (15,300 kept). The second round (section 4) dropped 227 more
-   and gave 208 repeated chat samples new topics; the final set holds 15,073 samples and passes section C.
-2. Review a stratified sample by hand (the gate in `DATA_SPEC.md` section D). The 280-sample review page is ready
-   (verdicts are saved with the page); 0 of 280 reviewed as of 2026-10-29.
-3. Then, each step only after a go-ahead:
-   - TTS, with pauses at phrase boundaries;
-   - MiniCPM-o duplex formatting;
-   - the untrained baseline (done 2026-10-29 in text chat mode, see above; to be rerun on speech after TTS);
-   - LoRA SFT;
-   - evaluation on FDB-v3 and the held-out tools.
+1. The data is ready: 14,076 samples after three fix passes (`DATA_SPEC.md` sections 3 to 5), section C passes,
+   every user turn is spoken (21,485 + 1,470 WAVs) and every sample is a duplex sequence in `duplex_full/seqs/`.
+2. Each step only after a go-ahead:
+   - LoRA SFT on the duplex sequences, as a learning curve (about 1,600, 3,300, 6,600 and all samples, one epoch
+     each, with 20-30% general dialogue mixed in), two cards per run;
+   - evaluation in the real duplex loop on a larger held-out test set (300+ spoken samples, with ask asking and
+     chat never calling a tool as hard checks), a chat regression test, and FDB-v3;
+   - the untrained duplex baseline on the same test set.

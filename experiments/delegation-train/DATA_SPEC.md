@@ -99,7 +99,8 @@ If a batch misses one of these, the prompt is adjusted before more batches are r
 
 - A stratified sample: 50 per target (250 in all) plus 30 speech-tagged samples, shown with their scenarios.
   Drawn by `make_review_sample.py` (seed 20261029) from the final set, with the tools each sample had.
-- Status (2026-10-29): the review page is ready and the review has not started (0 of 280).
+- Status (2026-10-29): Claude reviewed all 280 first (target right 97.5%, fully correct 89.6%, one short of the
+  gate); you decided the four problem groups, and the third fix round (section 5) applies them to the whole set.
 - For each sample: is the target right, are the label fields correct, is the objective faithful, does the request
   sound like a person?
 - Pass: at least 95% have the right target and at least 90% are fully correct. Otherwise the cause is fixed and the
@@ -188,3 +189,39 @@ running the round-2 checks again on it finds nothing to drop and no chat topic o
 
 Reused looked-up ids (17 for the Premier League in six `ask_lookup` samples) are realistic. A phone number that
 still appears in five requests is under the repetition limit.
+
+## 5. Third fix round (2026-10-29)
+
+The stratified review found four groups of problems; you decided each, and `apply_round3.py` applies them to the
+whole set. Every judgment of meaning was made by Claude review agents reading each sample (Qwen3-14B, tried first
+on the ask check, caught 3 of the 8 known bad asks in calibration, and none with its thinking on).
+
+### Dropped
+
+| Problem | How it was found | Samples |
+|---|---|---|
+| The user reads out API values: database codes for places, sports, competitions or languages, paging or locale parameters, raw coordinates, long opaque keys, or a dictated URL | `flag_api_speech.py` (Qwen3-14B, calibrated on the review: 7 of the 8 you marked caught) proposed 1,200 candidates; Claude confirmed 1,014 | 996 |
+| A first-round `ask_lookup` rewrite (it asked for what the user had said or the backend can look up) | all of them, as you decided | 427 |
+| An ask whose question is not needed or not complete: the value is given, implied or has an obvious default (page, count, locale, an end date that is now), a backend could look it up, or another missing value is not asked | Claude review of all 1,790 remaining asks (374 failed; some were already dropped above) | 338 |
+| A chat reply that invents details the user never gave (a race, a pet's breed, a gender, a place) | Claude review of all 1,557 chats; none needed a tool | 59 |
+| The user reads out a card number (the second round's rule for credentials) | pattern | 7 |
+| Label details the user never said (reviewed samples 52, 69, 82, 137, 192, 220) | the review | 5 |
+
+The number of a specific thing the user deals with (a player, team, order, account, policy or flight number) and
+short codes read off a document stay. ISO dates in requests stay; TTS reads them as spoken dates. Reviewers judged
+spoken email addresses differently between batches (one batch dropped them, others kept them); the few affected
+samples follow their batch's verdict.
+
+### Added
+
+Asks fell to 10.4%, so 1,270 new ask tasks were planned (`export_ask_topup.py`). The first plans had picked the
+missing value at random; here the writer saw every required parameter and chose one only the user can decide, or
+skipped the task (134 skipped: only a URL, coordinates, a credential, a page or count, or a technical code was
+missing). Claude agents wrote them by hand, `import_writer_answers.py --plans` checked them (953 passed), and a
+Claude review kept 835 (it dropped questions with an obvious answer, spoken domains, IP addresses and opaque ids,
+and questions that left another value unasked).
+
+### Result
+
+`check/fixround3/merged/delegation_v3.jsonl` holds 14,076 samples: train 12,686, dev 694, test 696; call 33.0%,
+handoff 31.0%, ask 15.7%, chat 10.6%, split 9.6%; filler 1,945, self-correction 728. Section C passes.

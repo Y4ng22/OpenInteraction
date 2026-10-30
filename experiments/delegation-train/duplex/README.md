@@ -37,11 +37,24 @@ Each second of audio is one unit. The layout copies what `MiniCPMODuplex.streami
 - Loss is on the model's own tokens: every `<|listen|>`/`<|speak|>` decision, the text, and the chunk and turn ends.
   Audio embeddings come from the official streaming path, so training sees what the live loop sees.
 
+## Full set (2026-10-29)
+
+All 14,076 samples of the third-round set (`DATA_SPEC.md` section 5) are spoken and built the same way, with three
+additions: earlier context turns are spoken too (their assistant lines are in the stream without loss), ISO dates
+are read as spoken dates, and 30% of requests get one 0.5-2 s pause at a phrase boundary. Output on the server in
+`duplex_full/`: `audio/` (21,485 WAVs) and `new/audio/` (1,470 for the 835 new asks), `seqs/` (one sequence per
+sample, 16 GB), `seq_index.jsonl` (split, target, speech, tokens: median 1,202, 95th percentile 1,779, max 3,874).
+The full targets use 34 tokens from the duplex decoder's banned list (brackets and the bytes of non-English
+characters in a few tool values); `allowed_banned_ids.json` lists them for `duplex_test.py --allow`.
+
+Building ran 8 shards with `OMP_NUM_THREADS` set: without it, four shards each took every CPU thread and the build
+crawled at 34 samples a minute.
+
 ## Pipeline
 
 | Step | File | Output (server, `/local/data/xy2764/delegation-train/duplex/`) |
 | --- | --- | --- |
-| Pick 200 train + 60 test samples, speak the user turns (Kokoro, 18 English voices, 16 kHz) | `tts.py` | `audio/`, `manifest.jsonl` |
+| Pick 200 train + 60 test samples, speak the user turns (Kokoro, 18 English voices, 16 kHz); `--all` for the whole set | `tts.py` | `audio/`, `manifest.jsonl` |
 | Build the duplex sequences | `build_sequences.py` | `seqs/` |
 | LoRA smoke training (4-bit on one card, or `--bf16` across two) | `train_lora.py` | `lora_smoke/`, `lora_smoke_bf16/` |
 | Run the test items through the real duplex loop and score the first decision | `duplex_test.py` | `results/` |

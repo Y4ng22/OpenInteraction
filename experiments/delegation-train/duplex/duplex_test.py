@@ -167,7 +167,8 @@ def main():
     ap.add_argument("--manifest", type=Path, required=True)
     ap.add_argument("--lora", type=Path)
     ap.add_argument("--split", default="test")
-    ap.add_argument("--allow", default="10896,11583,320,8", help="banned token ids the training targets use")
+    ap.add_argument("--allow", default="10896,11583,320,8",
+                    help="banned token ids the training targets use: a comma list, or a JSON file (allowed_banned_ids.json)")
     ap.add_argument("--silence-s", type=int, default=8)
     ap.add_argument("--decode", choices=["greedy", "sampling"], default="greedy", help="sampling uses the duplex defaults")
     ap.add_argument("--max-mem-gib", type=int, default=14)
@@ -190,7 +191,8 @@ def main():
         merge_lora(model.llm, args.lora)
     model.init_tts = lambda *a, **k: None
     duplex = model.as_duplex(generate_audio=False)
-    allow = {int(i) for i in args.allow.split(",") if i}
+    allow = (set(json.loads(Path(args.allow).read_text())) if args.allow.endswith(".json")
+             else {int(i) for i in args.allow.split(",") if i})
     duplex.decoder.forbidden_token_ids[:] = [i for i in duplex.decoder.forbidden_token_ids if i not in allow]
 
     gold = {x["id"]: x for x in map(json.loads, args.final.read_text(encoding="utf-8").splitlines())}

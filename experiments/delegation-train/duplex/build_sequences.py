@@ -1,6 +1,7 @@
 """Turn the spoken feasibility samples into MiniCPM-o 4.5 full-duplex training sequences.
 
-The layout copies what MiniCPMODuplex feeds and decodes at inference (modeling_minicpmo.py, streaming_prefill and
+Earlier context turns are spoken too (their assistant lines are in the stream but carry no loss). The layout
+copies what MiniCPMODuplex feeds and decodes at inference (modeling_minicpmo.py, streaming_prefill and
 streaming_generate, ls_mode "explicit"):
 
     <|im_start|>system\n{system}<|im_end|>
@@ -58,15 +59,16 @@ def call_text(name, arguments):
 
 
 def steps(x):
-    """The sample as an ordered list: ("user", k) for the k-th spoken turn, ("reply", text) for what the model
-    produces (tool calls, then speech), ("result", text) for a tool or backend result coming back."""
+    """The sample as an ordered list: ("user", k) for the k-th spoken turn, ("context", text) for an earlier
+    assistant line, ("reply", text) for what the model produces (tool calls, then speech), ("result", text) for a
+    tool or backend result coming back."""
     out, k = [], 0
     for e in x["events"]:
-        if e.get("context"):
-            continue
-        if e["role"] == "user":
+        if e["role"] == "user":  # earlier context turns are spoken too
             out.append(("user", k))
             k += 1
+        elif e["role"] == "assistant" and e.get("context"):
+            out.append(("context", e["say"]))
         elif e["role"] == "assistant":
             parts = [call_text(c["name"], c["arguments"]) for c in e.get("calls") or []]
             if e.get("objective"):
@@ -96,9 +98,10 @@ def main():
     ap.add_argument("--src", type=Path, required=True)
     ap.add_argument("--final", type=Path, required=True)
     ap.add_argument("--tools", type=Path, required=True)
-    ap.add_argument("--manifest", type=Path, required=True)
+    ap.add_argument("--manifest", type=Path, nargs="+", required=True)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--shard", default="0/1", help="i/n: build every n-th sample starting at i")
     args = ap.parse_args()
 
     from transformers import AutoModel, AutoTokenizer
@@ -120,8 +123,12 @@ def main():
     tools = {t["id"]: t for t in map(json.loads, args.tools.read_text(encoding="utf-8").splitlines())}
     args.out.mkdir(parents=True, exist_ok=True)
     index, banned_seen = [], {}
-    manifest = [json.loads(l) for l in args.manifest.read_text(encoding="utf-8").splitlines()]
+    manifest = [json.loads(l) for p in args.manifest for l in p.read_text(encoding="utf-8").splitlines()]
+    i_shard, n_shard = map(int, args.shard.split("/"))
+    manifest = manifest[i_shard::n_shard]
     for m in manifest[: args.limit or None]:
+        if (args.out / f"{m['id']}.pt").exists():
+            continue
         x = gold[m["id"]]
         plan = steps(x)
         assert sum(s == "user" for s, _ in plan) == len(m["wavs"]), m["id"]
@@ -136,13 +143,13 @@ def main():
 
         put(tok.encode("<|im_start|>system\n" + system_prompt(x, tools) + "<|im_end|>", add_special_tokens=False), False)
 
-        def audio_unit(chunk, outputs):
+        def audio_unit(chunk, outputs, learn=True):
             assert duplex.streaming_prefill(audio_waveform=chunk.astype(np.float32))["success"]
             put([T["<unit>"]], False)
             audio_at.append(len(ids))
             audio.append(rec.audio)
             put([0] * rec.audio.shape[0], False)  # placeholders, replaced by the embeddings at training time
-            put(outputs, True)
+            put(outputs, learn)
             put([T["</unit>"]], False)
 
         def speak(text):
@@ -166,6 +173,9 @@ def main():
                 speech = np.concatenate([speech, np.zeros(n * SR - len(speech), np.float32)])
                 for i in range(n):
                     audio_unit(speech[i * SR:(i + 1) * SR], [T["<|listen|>"]])
+            elif kind == "context":  # an earlier assistant line: in the stream, but not a training target
+                for out in speak(value):
+                    audio_unit(silence, out, learn=False)
             elif kind == "result":
                 audio_unit(silence, [T["<|listen|>"]])  # one second of waiting before the result lands
                 pending += "<tool_response>" + value + "</tool_response>"
@@ -181,7 +191,8 @@ def main():
         index.append({"id": m["id"], "split": m["split"], "target": m["target"], "tokens": len(ids)})
         torch.save({"ids": ids, "labels": labels, "audio": audio, "audio_at": audio_at}, args.out / f"{m['id']}.pt")
         print(m["id"], m["target"], len(ids), "tokens", len(audio), "audio units", flush=True)
-    (args.out / "seq_index.jsonl").write_text("".join(json.dumps(r) + "\n" for r in index), encoding="utf-8")
+    name = "seq_index.jsonl" if n_shard == 1 else f"seq_index_{i_shard}.jsonl"
+    (args.out / name).write_text("".join(json.dumps(r) + "\n" for r in index), encoding="utf-8")
     print("banned tokens used by targets:", banned_seen)
 
 

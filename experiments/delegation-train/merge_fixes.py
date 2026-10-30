@@ -29,6 +29,30 @@ def request_of(x):
     return next(e["text"] for e in x["events"] if e["role"] == "user" and not e.get("context"))
 
 
+def c_report(kept):
+    """The DATA_SPEC C numbers and checks for a sample set."""
+    n = len(kept)
+    split = collections.Counter(x["split"] for x in kept)
+    target = collections.Counter(x["target"] for x in kept)
+    speech = collections.Counter(x.get("speech", "plain") for x in kept)
+    full = collections.Counter(x["target"] for x in kept if x["full"])
+    with_context = [x for x in kept if any(e.get("context") for e in x["events"])]
+    asking = sum(1 for x in with_context
+                 if [e for e in x["events"] if e.get("context") and e["role"] == "assistant"][-1]["say"].strip().endswith("?"))
+    lines = collections.Counter(e.get("say") or e.get("text") for x in kept for e in x["events"]
+                                if e.get("context") or (e["role"] == "assistant" and e.get("objective")))
+    share = {t: round(100 * target[t] / n, 1) for t in PLAN}
+    checks = {
+        "at least 13,000 kept": n >= 13000,
+        "train >= 11,800, dev >= 600, test >= 600": split["train"] >= 11800 and split["dev"] >= 600 and split["test"] >= 600,
+        "each target within 3 points of the plan": all(abs(share[t] - PLAN[t]) <= 3 for t in PLAN),
+        "filler >= 8% and self-correction >= 4%": speech["filler"] >= 0.08 * n and speech["self_correction"] >= 0.04 * n,
+        "no line 20 or more times": not any(c >= 20 for c in lines.values()),
+    }
+    return {"kept": n, "split": dict(split), "target_share": share, "speech": dict(speech), "full": dict(full),
+            "context_lines_ending_with_question": f"{asking} of {len(with_context)}", "data_spec_c": checks}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--checked", type=Path, nargs="+", required=True)
@@ -70,28 +94,8 @@ def main():
         seen.add(key)
         kept.append(x)
 
-    n = len(kept)
-    split = collections.Counter(x["split"] for x in kept)
-    target = collections.Counter(x["target"] for x in kept)
-    speech = collections.Counter(x.get("speech", "plain") for x in kept)
-    full = collections.Counter(x["target"] for x in kept if x["full"])
-    with_context = [x for x in kept if any(e.get("context") for e in x["events"])]
-    asking = sum(1 for x in with_context
-                 if [e for e in x["events"] if e.get("context") and e["role"] == "assistant"][-1]["say"].strip().endswith("?"))
-    lines = collections.Counter(e.get("say") or e.get("text") for x in kept for e in x["events"]
-                                if e.get("context") or (e["role"] == "assistant" and e.get("objective")))
-    share = {t: round(100 * target[t] / n, 1) for t in PLAN}
-    checks = {
-        "at least 13,000 kept": n >= 13000,
-        "train >= 11,800, dev >= 600, test >= 600": split["train"] >= 11800 and split["dev"] >= 600 and split["test"] >= 600,
-        "each target within 3 points of the plan": all(abs(share[t] - PLAN[t]) <= 3 for t in PLAN),
-        "filler >= 8% and self-correction >= 4%": speech["filler"] >= 0.08 * n and speech["self_correction"] >= 0.04 * n,
-        "no line 20 or more times": not any(c >= 20 for c in lines.values()),
-    }
-    report = {"kept": n, "split": dict(split), "target_share": share, "speech": dict(speech), "full": dict(full),
-              "context_lines_ending_with_question": f"{asking} of {len(with_context)}",
-              "fixes_applied": dict(applied), "fixes_missing_or_failed": dict(unfixed), "removed": dict(removed),
-              "data_spec_c": checks}
+    report = {**c_report(kept), "fixes_applied": dict(applied), "fixes_missing_or_failed": dict(unfixed),
+              "removed": dict(removed)}
     args.out.write_text("".join(json.dumps(x, ensure_ascii=False) + "\n" for x in kept), encoding="utf-8")
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=1))
