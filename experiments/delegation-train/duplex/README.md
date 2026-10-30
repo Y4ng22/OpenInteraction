@@ -22,14 +22,18 @@ Each second of audio is one unit. The layout copies what `MiniCPMODuplex.streami
 | Unit | Tokens |
 | --- | --- |
 | listening | `<unit>` [10 audio embeddings] `<\|listen\|>` `</unit>` |
-| speaking, more to come | `<unit>` [audio] `<\|speak\|>` up to 18 tokens `<\|chunk_eos\|>` `</unit>` |
-| speaking, last piece | `<unit>` [audio] `<\|speak\|>` up to 17 tokens `<\|turn_eos\|>` `<\|listen\|>` `</unit>` |
+| speaking, more to come | `<unit>` [audio] `<\|speak\|>` a few tokens `<\|chunk_eos\|>` `</unit>` |
+| speaking, turn ends | `<unit>` [audio] `<\|speak\|>` `<\|turn_eos\|>` `<\|chunk_eos\|>` `</unit>` (usually its own unit, sometimes after the last words) |
 | a tool or backend result arrives | `<unit>` `<tool_response>…</tool_response>` `<\|speak\|>` … `</unit>` (text unit, already supported by `streaming_prefill(text_list=…)`) |
 
 - The reply starts in the first silent second after the user stops.
-- A reply is its tool calls, one line each, `<tool_call>{"name": …, "arguments": {…}}</tool_call>` (a handoff calls
-  `spawn_thinking` with the objective), followed by the spoken text. A call longer than 18 tokens runs over several
-  units, so speech starts one to three seconds later; acknowledging first is the alternative if that is too slow.
+- Spoken text goes out at the untrained model's own pace: tokens per unit are drawn from what it produces in duplex
+  (`PACE` in `build_sequences.py`, mostly 2 to 4, mean about 3), and the turn usually ends in a unit of its own. The
+  feasibility test packed 18 tokens a unit, about six times faster than the model speaks.
+- A handoff or split reply speaks its short acknowledgment first, then writes its calls, one line each
+  (`<tool_call>{"name": …, "arguments": {…}}</tool_call>`, a handoff calls `spawn_thinking` with the objective), 18
+  tokens a unit. A plain call has no acknowledgment: the result comes back within a second or two.
+  (The feasibility test below put the calls first; `--calls-first` keeps that order.)
 - The harness cuts `<tool_call>…</tool_call>` out of the stream before TTS (`intercept` in `duplex_test.py`, as in
   `fdb-chain/duplex_probe.py`).
 - The training targets use four tokens from the banned list (`" ("`, `")"`, `"(H"`, `')",'`, all inside call
@@ -50,6 +54,30 @@ characters in a few tool values); `allowed_banned_ids.json` lists them for `dupl
 Building ran 8 shards with `OMP_NUM_THREADS` set: without it, four shards each took every CPU thread and the build
 crawled at 34 samples a minute.
 
+## Training set (2026-10-30)
+
+The fourth-round set (`DATA_SPEC.md` section 6, 14,017 samples) was rebuilt in the format above into
+`duplex_full/seqs_v4/` (28 GB): acknowledgment first, the model's own speaking pace, and 800 two-request episodes
+(`--pairs 800`: a handoff whose backend result arrives only after the user asked something else and was answered;
+median 2,555 tokens). `seq_index.jsonl` there: 13,432 train (call 4,185, handoff 3,962, ask 1,919, chat 1,347,
+split 1,219, pair 800), 690 dev, 695 test; tokens median 1,330, 95th percentile 2,246, max 4,186. The targets use 33
+tokens from the decoder's banned list (`allowed_banned_ids_v4.json`).
+
+Self-distillation (`self_distill.py`) keeps the model's own duplex behavior in the mix: 3,500 DailyDialog
+conversations (two thirds turn-taking, one third cut in after 1 to 3 spoken units) run through the untrained model,
+its own outputs as targets. `filter_selfdistill.py` keeps 3,229 and drops 202 where it kept talking 3 s into a
+cut-in (17% of the cut-ins), 37 where it never spoke, and 32 where it called itself Qwen or Alibaba's. Answering
+before the user has finished is kept: the model decides every second whether it has heard enough.
+
+Training (`train_lora.py`, waiting for approval): LoRA r16 on every projection, bf16 across two cards, lr 2e-4,
+one epoch per learning-curve point (`--fraction` 0.125, 0.25, 0.5, 1: about 2.1k, 4.2k, 8.3k and 16.7k sequences, the
+same share of every target including self-distillation), eval loss per target on 300 dev sequences.
+
+Evaluation, base model now and each adapter later (`eval_v4/`):
+- all 695 test samples through the real duplex loop with the result fed back (`duplex_test.py --with-result`, sharded);
+- duplex behavior on 300 held-out DailyDialog validation conversations (`self_distill.py prepare --prefix sdeval`,
+  then `run` with and without `--lora`), scored with `filter_selfdistill.py`'s counts per timing.
+
 ## Pipeline
 
 | Step | File | Output (server, `/local/data/xy2764/delegation-train/duplex/`) |
@@ -58,6 +86,8 @@ crawled at 34 samples a minute.
 | Build the duplex sequences | `build_sequences.py` | `seqs/` |
 | LoRA smoke training (4-bit on one card, or `--bf16` across two) | `train_lora.py` | `lora_smoke/`, `lora_smoke_bf16/` |
 | Run the test items through the real duplex loop and score the first decision | `duplex_test.py` | `results/` |
+| Self-distillation conversations, and their filter (also the duplex-behavior eval) | `self_distill.py`, `filter_selfdistill.py` | `../duplex_sd/` (`seqs/`, `keep.jsonl`), `../duplex_sdeval/` |
+| Full training set and base-model evals | `build_sequences.py --pairs 800`, `duplex_test.py --shard` | `../duplex_full/seqs_v4/`, `../eval_v4/` |
 
 ## Results (2026-10-29)
 
