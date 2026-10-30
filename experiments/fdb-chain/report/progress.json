@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-29T23:01:06Z",
+  "updated": "2026-10-30T01:21:25Z",
   "steps": [
     {
       "id": "s01",
@@ -75,42 +75,43 @@
     },
     {
       "id": "s08",
-      "note": "Done: all 154 batches written and checked (15,383 of 15,400 kept), then two fix passes after whole-dataset reviews. First pass: 83 dropped, 3,420 rewritten, all passed. Second pass: 227 dropped (secrets said aloud, non-English text, contradictory asks, chained calls) and 208 repeated chat topics rewritten, all passed. Final set: 15,073 samples (train 13,684, dev 697, test 692); call 34.6%, handoff 30.1%, ask 14.7%, chat 10.3%, split 10.3%; 2,084 filler, 803 self-correction.",
+      "note": "Done: 154 batches written and checked, then three fix passes. Third pass (after the stratified review): dropped 996 samples that read API values aloud (Qwen3-14B proposed, Claude confirmed), all 427 first-round ask rewrites, 338 asks and 59 chats that failed a Claude review of every ask and chat, 7 card numbers and 5 reviewed leaks; added 835 new asks written and reviewed by Claude. Final set: 14,076 samples (train 12,686, dev 694, test 696); call 33.0%, handoff 31.0%, ask 15.7%, chat 10.6%, split 9.6%; 1,945 filler, 728 self-correction. Section C passes.",
       "order": 9,
       "pct": 100,
       "phase": "Data",
       "status": "done",
       "title": "Requests and targets (fast tools in the frontend, the rest handed off)",
-      "updated": "2026-10-29T05:14:43Z"
+      "updated": "2026-10-30T01:21:25Z"
     },
     {
       "id": "s09",
-      "note": "Many voices; silence of 0.5 to 2 s inside about 30% of requests, so the model learns to keep listening. Starts only after your go-ahead.",
+      "note": "Done with Kokoro (18 English voices, 16 kHz): every user turn of the 14,076 samples, earlier context turns included, 22,955 WAVs. ISO dates read as spoken dates; one 0.5-2 s pause at a phrase boundary in 30% of requests.",
       "order": 10,
       "phase": "Data",
-      "status": "todo",
+      "status": "done",
       "title": "TTS, with pauses at phrase boundaries",
-      "updated": "2026-10-28T17:20:00Z"
+      "updated": "2026-10-30T01:21:25Z",
+      "pct": 100
     },
     {
       "id": "s10",
-      "note": "Feasibility test done. The duplex decoder bans \"\\n\" (6,965 banned tokens), so chat-mode tool calls can never come out in duplex. Format: one unit per second, calls on one line as <tool_call>{...}</tool_call> before speech, results as text units. 200 samples spoken with Kokoro, bf16 LoRA on 2 cards for 20 minutes. On 60 held-out samples through the real duplex loop: target right 52/60 greedy and 54/60 sampling vs 20/60 untrained (which never calls a tool); acknowledgment on every handoff; no call text reaches TTS. Result fed back as a text unit (34 held-out samples): tells the user with a value from the result in 30/34 (untrained 15/34), 33/34 tell the user at all, 1 hands off again.",
+      "note": "Format proven by the feasibility test (duplex target right 52-54/60 vs 20/60 untrained; results fed back as text units told with a value 30/34). All 14,076 samples are now built as duplex sequences (median 1,202 tokens, max 3,874; 16 GB of audio embeddings), with the 34 banned decoder tokens the targets use listed for inference. Left: the general-dialogue mix and the training run itself, which waits for your go-ahead.",
       "order": 11,
       "phase": "Data",
       "status": "doing",
       "title": "MiniCPM-o duplex format, training setup and smoke test",
-      "updated": "2026-10-29T23:01:06Z",
-      "pct": 50
+      "updated": "2026-10-30T01:21:25Z",
+      "pct": 75
     },
     {
       "id": "s11",
-      "note": "Claude reviewed all 280 first: target right 97.5% (gate 95%), fully correct 89.6% (gate 90%, one short). You decided the four problem groups: requests that read out API codes are unnatural except player-type IDs; ISO dates become spoken dates at TTS; first-round ask rewrites are dropped across the whole set; the 6 samples with leaked details are dropped. Per-sample check of Claude's 39 flagged and spot-checked samples on the Review Desk: 0 of 39 so far.",
+      "note": "Claude reviewed the 280-sample stratified review (target right 97.5%, fully correct 89.6%); you decided the four problem groups; the third fix round applied them to the whole set with a Claude review of every ask and chat and of every flagged API-value request. The final set passes section C.",
       "order": 12,
       "phase": "Review",
-      "status": "todo",
+      "status": "done",
       "title": "Your review of the data",
-      "updated": "2026-10-29T16:29:03Z",
-      "pct": 15
+      "updated": "2026-10-30T01:21:25Z",
+      "pct": 100
     },
     {
       "id": "s12",
