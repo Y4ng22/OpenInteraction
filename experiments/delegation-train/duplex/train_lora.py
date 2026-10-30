@@ -1,4 +1,4 @@
-"""QLoRA smoke training of MiniCPM-o 4.5's language model on the duplex sequences from build_sequences.py.
+"""LoRA training of MiniCPM-o 4.5's language model on the duplex sequences from build_sequences.py.
 
 The language model is the plain Qwen3 checkpoint from baseline/extract_llm.py, loaded in 4-bit on one 16 GB card,
 or with --bf16 unquantized across the visible cards.
@@ -6,9 +6,17 @@ Each sequence's token ids are embedded and its audio placeholders replaced by th
 model sees exactly the duplex input; loss is on the labeled tokens only. The adapter uses MiniCPM-o's module names
 under `llm.`, so it can be merged into the full model for the duplex test (merge_lora.py).
 
+The full run mixes the delegation sequences (with their two-request pairs) and the kept self-distillation
+conversations (self_distill.py, filter_selfdistill.py). --fraction trains on the same stratified share of every target,
+self-distillation included, for the learning curve. Sequences are read from disk at each step, not held in memory.
+Eval loss is on a stratified sample of --eval-split, reported per target.
+
     python train_lora.py --llm /local/data/xy2764/models/minicpmo45-llm --seqs seqs --out lora_smoke
+    python train_lora.py --llm ... --bf16 --seqs duplex_full/seqs_v4 --selfdistill duplex_sd/seqs \
+        --sd-keep duplex_sd/keep.jsonl --fraction 0.125 --epochs 1 --out runs/lc_0125
 """
 import argparse
+import collections
 import json
 import math
 import random
@@ -30,22 +38,58 @@ def embed(model, sample, device):
 
 
 @torch.no_grad()
-def eval_loss(model, samples, device):
+def eval_loss(model, rows, device):
+    """Token-weighted loss over the rows, overall ("all") and per target."""
     model.eval()
-    tot, n = 0.0, 0
-    for s in samples:
-        x, y = embed(model, s, device)
+    tot, n = collections.Counter(), collections.Counter()
+    for r in rows:
+        x, y = embed(model, torch.load(r["path"]), device)
         out = model(inputs_embeds=x, labels=y)
         k = int((y[:, 1:] != -100).sum())
-        tot, n = tot + out.loss.item() * k, n + k
+        for key in ("all", r["target"]):
+            tot[key] += out.loss.item() * k
+            n[key] += k
     model.train()
-    return tot / max(n, 1)
+    return {key: tot[key] / n[key] for key in n}
+
+
+def stratified(rows, fraction, rng):
+    """The same share of every target, at least one each."""
+    by = collections.defaultdict(list)
+    for r in rows:
+        by[r["target"]].append(r)
+    out = []
+    for target in sorted(by):
+        group = sorted(by[target], key=lambda r: r["id"])
+        rng.shuffle(group)
+        out += group[:max(1, round(len(group) * fraction))]
+    return out
+
+
+def load_rows(args):
+    rows = []
+    for d in args.seqs:
+        for l in (d / "seq_index.jsonl").read_text().splitlines():
+            r = json.loads(l)
+            rows.append({"id": r["id"], "split": r["split"], "target": r["target"], "path": d / f"{r['id']}.pt"})
+    if args.selfdistill:
+        for l in args.sd_keep.read_text().splitlines():
+            r = json.loads(l)
+            if r["keep"]:
+                rows.append({"id": r["id"], "split": "train", "target": "selfdistill", "path": args.selfdistill / f"{r['id']}.pt"})
+    return rows
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--llm", type=Path, required=True)
-    ap.add_argument("--seqs", type=Path, required=True)
+    ap.add_argument("--seqs", type=Path, nargs="+", required=True, help="directories with seq_index.jsonl")
+    ap.add_argument("--selfdistill", type=Path, help="self_distill.py sequences, mixed into train")
+    ap.add_argument("--sd-keep", type=Path, help="filter_selfdistill.py output; only kept conversations are used")
+    ap.add_argument("--fraction", type=float, default=1.0, help="stratified share of the train rows (learning curve)")
+    ap.add_argument("--eval-split", default="test")
+    ap.add_argument("--eval-n", type=int, default=0, help="stratified sample of the eval split (0: all of it)")
+    ap.add_argument("--save-every", type=int, default=0, help="also save the adapter every this many steps")
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--accum", type=int, default=4)
@@ -58,10 +102,16 @@ def main():
     rng = random.Random(args.seed)
     device = "cuda"
 
-    index = [json.loads(l) for l in (args.seqs / "seq_index.jsonl").read_text().splitlines()]
-    load = lambda r: torch.load(args.seqs / f"{r['id']}.pt")
-    train = [load(r) for r in index if r["split"] == "train"]
-    test = [load(r) for r in index if r["split"] == "test"]
+    rows = load_rows(args)
+    train = [r for r in rows if r["split"] == "train"]
+    if args.fraction < 1:
+        train = stratified(train, args.fraction, random.Random(args.seed))
+    test = [r for r in rows if r["split"] == args.eval_split]
+    if args.eval_n:
+        test = stratified(test, args.eval_n / len(test), random.Random(args.seed))
+    print("train", dict(collections.Counter(r["target"] for r in train)), "eval", dict(collections.Counter(r["target"] for r in test)),
+          flush=True)
+    args.out.mkdir(parents=True, exist_ok=True)
 
     if args.bf16:  # plain LoRA, the model split across the visible cards
         model = AutoModelForCausalLM.from_pretrained(
@@ -82,8 +132,9 @@ def main():
     steps = math.ceil(len(train) * args.epochs / args.accum)
     opt = torch.optim.AdamW([p for p in model.parameters() if p.requires_grad], lr=args.lr, weight_decay=0.0)
     sched = get_cosine_schedule_with_warmup(opt, max(1, steps // 10), steps)
-    log = {"test_loss_before": eval_loss(model, test, device), "steps": []}
-    print(f"test loss before: {log['test_loss_before']:.4f}", flush=True)
+    log = {"args": {k: str(v) for k, v in vars(args).items()}, "train": len(train),
+           "test_loss_before": eval_loss(model, test, device), "steps": []}
+    print("test loss before:", json.dumps(log["test_loss_before"]), flush=True)
 
     model.train()
     step, t0, run = 0, time.time(), []
@@ -91,7 +142,7 @@ def main():
         order = list(range(len(train)))
         rng.shuffle(order)
         for i, j in enumerate(order):
-            x, y = embed(model, train[j], device)
+            x, y = embed(model, torch.load(train[j]["path"]), device)
             loss = model(inputs_embeds=x, labels=y).loss
             (loss / args.accum).backward()
             run.append(loss.item())
@@ -105,10 +156,11 @@ def main():
                     print(f"step {step}/{steps} epoch {epoch} loss {mean:.4f} {time.time() - t0:.0f}s "
                           f"{torch.cuda.max_memory_allocated() / 2**30:.1f} GiB", flush=True)
                     run = []
-    args.out.mkdir(parents=True, exist_ok=True)
+                if args.save_every and step % args.save_every == 0:
+                    model.save_pretrained(args.out / f"step_{step}")
     model.save_pretrained(args.out)  # before the final eval, which can run out of memory on one card
     log["test_loss_after"] = eval_loss(model, test, device)
-    print(f"test loss after: {log['test_loss_after']:.4f}", flush=True)
+    print("test loss after:", json.dumps(log["test_loss_after"]), flush=True)
     (args.out / "train_log.json").write_text(json.dumps(log, indent=1))
 
 

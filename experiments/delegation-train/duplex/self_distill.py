@@ -17,6 +17,9 @@ run: streams each conversation into MiniCPMODuplex (default duplex system prompt
     python self_distill.py prepare --dailydialog train.parquet -n 3500 --out sd/
     python self_distill.py run --src <snapshot> --scripts sd/scripts.jsonl --manifest sd/manifest_*.jsonl \
         --out sd/seqs --shard 0/2
+
+The same loop measures duplex behavior after training: prepare held-out conversations from DailyDialog's validation
+split (--prefix sdeval --split test), run them with and without --lora, and compare filter_selfdistill.py's counts.
 """
 import argparse
 import json
@@ -50,7 +53,7 @@ def prepare(args):
         if len(users) < 2:
             continue
         timing = rng.choices(["turns", "barge_in"], weights=[2, 1])[0]
-        out.append({"id": f"sd-{len(out):05d}", "split": "train", "target": "selfdistill", "timing": timing,
+        out.append({"id": f"{args.prefix}-{len(out):05d}", "split": args.split, "target": "selfdistill", "timing": timing,
                     "events": [{"role": "user", "text": u} for u in users]})
         if len(out) == args.n:
             break
@@ -80,6 +83,9 @@ def run(args):
                                       init_vision=False, init_audio=True, init_tts=True, device_map="auto",
                                       max_memory={g: "14GiB" for g in range(n_gpu)}).eval()
     tok = AutoTokenizer.from_pretrained(args.src, trust_remote_code=True)
+    if args.lora:
+        from duplex_test import merge_lora
+        merge_lora(model.llm, args.lora)
     model.init_tts = lambda *a, **k: None
     duplex = model.as_duplex(generate_audio=False)
     tap = Tap(duplex.decoder)
@@ -158,6 +164,8 @@ def main():
     p.add_argument("--dailydialog", type=Path, required=True)
     p.add_argument("-n", type=int, default=3500)
     p.add_argument("--seed", type=int, default=20261030)
+    p.add_argument("--prefix", default="sd")
+    p.add_argument("--split", default="train")
     p.add_argument("--out", type=Path, required=True)
     r = sub.add_parser("run")
     r.add_argument("--src", type=Path, required=True)
@@ -165,6 +173,7 @@ def main():
     r.add_argument("--manifest", type=Path, nargs="+", required=True)
     r.add_argument("--out", type=Path, required=True)
     r.add_argument("--shard", default="0/1")
+    r.add_argument("--lora", type=Path, help="merge this train_lora.py adapter first (behavior eval)")
     r.add_argument("--limit", type=int, default=0)
     r.add_argument("--max-wait", type=int, default=12, help="seconds of silence to wait for the reply to end")
     r.add_argument("--max-units", type=int, default=120)

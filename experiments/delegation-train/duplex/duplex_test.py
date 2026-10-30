@@ -164,7 +164,8 @@ def main():
     ap.add_argument("--src", type=Path, required=True)
     ap.add_argument("--final", type=Path, required=True)
     ap.add_argument("--tools", type=Path, required=True)
-    ap.add_argument("--manifest", type=Path, required=True)
+    ap.add_argument("--manifest", type=Path, nargs="+", required=True)
+    ap.add_argument("--shard", default="0/1", help="i/n: run every n-th item starting at i (concatenate the .jsonl, then --rescore)")
     ap.add_argument("--lora", type=Path)
     ap.add_argument("--split", default="test")
     ap.add_argument("--allow", default="10896,11583,320,8",
@@ -197,7 +198,10 @@ def main():
 
     gold = {x["id"]: x for x in map(json.loads, args.final.read_text(encoding="utf-8").splitlines())}
     tools = {t["id"]: t for t in map(json.loads, args.tools.read_text(encoding="utf-8").splitlines())}
-    items = [m for m in map(json.loads, args.manifest.read_text(encoding="utf-8").splitlines()) if m["split"] == args.split]
+    items = [m for p in args.manifest for m in map(json.loads, p.read_text(encoding="utf-8").splitlines())
+             if m["split"] == args.split and m["id"] in gold]
+    i_shard, n_shard = map(int, args.shard.split("/"))
+    items = sorted({m["id"]: m for m in items}.values(), key=lambda m: m["id"])[i_shard::n_shard]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     for m in items:
