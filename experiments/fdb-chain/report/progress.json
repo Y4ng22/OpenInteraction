@@ -85,7 +85,7 @@
     },
     {
       "id": "s09",
-      "note": "Done with Kokoro (18 English voices, 16 kHz): every user turn of the 14,076 samples, earlier context turns included, 22,955 WAVs. ISO dates read as spoken dates; one 0.5-2 s pause at a phrase boundary in 30% of requests.",
+      "note": "Done with Kokoro (18 English voices, 16 kHz): every user turn of the 14,076 samples, earlier context turns included (22,955 WAVs, counting those of samples dropped afterwards). ISO dates read as spoken dates; one 0.5-2 s pause at a phrase boundary in 30% of requests.",
       "order": 10,
       "phase": "Data",
       "status": "done",
