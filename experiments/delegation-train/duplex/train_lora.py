@@ -37,6 +37,17 @@ def embed(model, sample, device):
     return x.unsqueeze(0), torch.tensor(sample["labels"], device=device).unsqueeze(0)
 
 
+def token_loss(model, x, y):
+    """Mean loss on the labeled tokens. Logits are computed only there: over a whole 4,000-token sequence they need
+    about 2 GB on the last card and run it out of memory."""
+    lm = model.get_base_model()
+    hidden = lm.model(inputs_embeds=x).last_hidden_state[:, :-1]
+    target = y[:, 1:]
+    keep = target != -100
+    logits = lm.lm_head(hidden[keep.to(hidden.device)])
+    return torch.nn.functional.cross_entropy(logits.float(), target[keep].to(logits.device))
+
+
 @torch.no_grad()
 def eval_loss(model, rows, device):
     """Token-weighted loss over the rows, overall ("all") and per target."""
@@ -44,10 +55,10 @@ def eval_loss(model, rows, device):
     tot, n = collections.Counter(), collections.Counter()
     for r in rows:
         x, y = embed(model, torch.load(r["path"]), device)
-        out = model(inputs_embeds=x, labels=y)
+        loss = token_loss(model, x, y).item()
         k = int((y[:, 1:] != -100).sum())
         for key in ("all", r["target"]):
-            tot[key] += out.loss.item() * k
+            tot[key] += loss * k
             n[key] += k
     model.train()
     return {key: tot[key] / n[key] for key in n}
@@ -71,12 +82,13 @@ def load_rows(args):
     for d in args.seqs:
         for l in (d / "seq_index.jsonl").read_text().splitlines():
             r = json.loads(l)
-            rows.append({"id": r["id"], "split": r["split"], "target": r["target"], "path": d / f"{r['id']}.pt"})
+            rows.append({"id": r["id"], "split": r["split"], "target": r["target"], "tokens": r["tokens"], "path": d / f"{r['id']}.pt"})
     if args.selfdistill:
         for l in args.sd_keep.read_text().splitlines():
             r = json.loads(l)
             if r["keep"]:
-                rows.append({"id": r["id"], "split": "train", "target": "selfdistill", "path": args.selfdistill / f"{r['id']}.pt"})
+                rows.append({"id": r["id"], "split": "train", "target": "selfdistill", "tokens": r["tokens"],
+                             "path": args.selfdistill / f"{r['id']}.pt"})
     return rows
 
 
@@ -137,13 +149,17 @@ def main():
     print("test loss before:", json.dumps(log["test_loss_before"]), flush=True)
 
     model.train()
+    x, y = embed(model, torch.load(max(train, key=lambda r: r["tokens"])["path"]), device)
+    token_loss(model, x, y).backward()  # fail now, not hours in, if the largest sequence does not fit
+    opt.zero_grad(set_to_none=True)
+    print(f"largest sequence fits: {x.shape[1]} tokens, {torch.cuda.max_memory_allocated() / 2**30:.1f} GiB", flush=True)
     step, t0, run = 0, time.time(), []
     for epoch in range(args.epochs):
         order = list(range(len(train)))
         rng.shuffle(order)
         for i, j in enumerate(order):
             x, y = embed(model, torch.load(train[j]["path"]), device)
-            loss = model(inputs_embeds=x, labels=y).loss
+            loss = token_loss(model, x, y)
             (loss / args.accum).backward()
             run.append(loss.item())
             if (i + 1) % args.accum == 0 or i == len(order) - 1:

@@ -69,7 +69,7 @@ its own outputs as targets. `filter_selfdistill.py` keeps 3,229 and drops 202 wh
 cut-in (17% of the cut-ins), 37 where it never spoke, and 32 where it called itself Qwen or Alibaba's. Answering
 before the user has finished is kept: the model decides every second whether it has heard enough.
 
-Training (`train_lora.py`, waiting for approval): LoRA r16 on every projection, bf16 across two cards, lr 2e-4,
+Training (`train_lora.py`, started 2026-10-30): LoRA r16 on every projection, bf16 across two cards, lr 2e-4,
 one epoch per learning-curve point (`--fraction` 0.125, 0.25, 0.5, 1: about 2.1k, 4.2k, 8.3k and 16.7k sequences, the
 same share of every target including self-distillation), eval loss per target on 300 dev sequences.
 
