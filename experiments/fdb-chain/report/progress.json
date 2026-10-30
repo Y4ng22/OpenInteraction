@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-30T01:21:25Z",
+  "updated": "2026-10-30T07:30:00Z",
   "steps": [
     {
       "id": "s01",
@@ -75,13 +75,13 @@
     },
     {
       "id": "s08",
-      "note": "Done: 154 batches written and checked, then three fix passes. Third pass (after the stratified review): dropped 996 samples that read API values aloud (Qwen3-14B proposed, Claude confirmed), all 427 first-round ask rewrites, 338 asks and 59 chats that failed a Claude review of every ask and chat, 7 card numbers and 5 reviewed leaks; added 835 new asks written and reviewed by Claude. Final set: 14,076 samples (train 12,686, dev 694, test 696); call 33.0%, handoff 31.0%, ask 15.7%, chat 10.6%, split 9.6%; 1,945 filler, 728 self-correction. Section C passes.",
+      "note": "Done: 154 batches written and checked, then three fix passes. Third pass (after the stratified review): dropped 996 samples that read API values aloud (Qwen3-14B proposed, Claude confirmed), all 427 first-round ask rewrites, 338 asks and 59 chats that failed a Claude review of every ask and chat, 7 card numbers and 5 reviewed leaks; added 835 new asks written and reviewed by Claude. Final set: 14,076 samples (train 12,686, dev 694, test 696); call 33.0%, handoff 31.0%, ask 15.7%, chat 10.6%, split 9.6%; 1,945 filler, 728 self-correction. Section C passes. Fourth pass (after the training-target review): split and handoff acknowledgments rewritten where they claimed a result or added details the user never gave (807 split, 1,076 handoff), 59 samples with a plain name in an ID argument dropped, and 78 backend results made failed or partial with an answer that says so. Final set: 14,017 samples (train 12,632, dev 690, test 695); Section C passes.",
       "order": 9,
       "pct": 100,
       "phase": "Data",
       "status": "done",
       "title": "Requests and targets (fast tools in the frontend, the rest handed off)",
-      "updated": "2026-10-30T01:21:25Z"
+      "updated": "2026-10-30T07:30:00Z"
     },
     {
       "id": "s09",
@@ -95,13 +95,13 @@
     },
     {
       "id": "s10",
-      "note": "Format proven by the feasibility test (duplex target right 52-54/60 vs 20/60 untrained; results fed back as text units told with a value 30/34). All 14,076 samples are now built as duplex sequences (median 1,202 tokens, max 3,874; 16 GB of audio embeddings), with the 34 banned decoder tokens the targets use listed for inference. Left: the general-dialogue mix and the training run itself, which waits for your go-ahead.",
+      "note": "Format proven by the feasibility test (duplex target right 52-54/60 vs 20/60 untrained; results fed back as text units told with a value 30/34). Final training set built: the 14,017 samples in the new layout (acknowledgment spoken first, then the calls; speech at the model's own pace of about 3 tokens a second), plus 800 two-request episodes (a backend result arrives after the user asked something else): 14,817 sequences, 28 GB. Self-distillation keeps MiniCPM-o's own duplex behavior in the mix: 3,500 DailyDialog conversations run through the untrained model, 3,229 kept after dropping 202 that kept talking through a cut-in, 37 that never spoke and 32 that said it is Qwen. The training script mixes them, with learning-curve subsets.",
       "order": 11,
       "phase": "Data",
-      "status": "doing",
+      "status": "done",
       "title": "MiniCPM-o duplex format, training setup and smoke test",
-      "updated": "2026-10-30T01:21:25Z",
-      "pct": 75
+      "updated": "2026-10-30T07:30:00Z",
+      "pct": 100
     },
     {
       "id": "s11",
@@ -119,18 +119,18 @@
       "phase": "Train",
       "status": "doing",
       "title": "Untrained MiniCPM-o baseline",
-      "updated": "2026-10-29T16:29:03Z",
-      "pct": 50,
-      "note": "Done in text chat mode (full duplex has no tool-call path; TTS not run yet): official MiniCPM-o 4.5 code, fast tools + spawn_thinking, 692 test samples. Target accuracy 59.2%: call 61.2%, handoff 84.5%, ask 13.8%, split 49.3%, chat 62.4%. It over-hands-off (75 call and 25 chat items sent to the backend), almost never asks, and says nothing when it hands off (0 of 198). Reporting a backend result already works: 31/31 right after the handoff, 30/31 after an unrelated exchange. To rerun on speech after TTS."
+      "updated": "2026-10-30T07:30:00Z",
+      "pct": 70,
+      "note": "Done in text chat mode (full duplex has no tool-call path; TTS not run yet): official MiniCPM-o 4.5 code, fast tools + spawn_thinking, 692 test samples. Target accuracy 59.2%: call 61.2%, handoff 84.5%, ask 13.8%, split 49.3%, chat 62.4%. It over-hands-off (75 call and 25 chat items sent to the backend), almost never asks, and says nothing when it hands off (0 of 198). Reporting a backend result already works: 31/31 right after the handoff, 30/31 after an unrelated exchange. Now running in full duplex on speech, overnight: all 695 test samples with the result fed back, and a duplex-behavior check on 300 held-out conversations (stops when cut in, never speaks, says it is Qwen), the same checks every trained adapter will get."
     },
     {
       "id": "s13",
-      "note": "Learning curve on 25%, 50% and 100% of the data to see whether more data would help.",
+      "note": "Ready and waiting for your go-ahead: LoRA r16, bf16 on two cards, one epoch at 12.5%, 25%, 50% and 100% of the mix (about 2.1k, 4.2k, 8.3k and 16.7k sequences), eval loss per target on dev, then the duplex tests on each adapter.",
       "order": 14,
       "phase": "Train",
       "status": "todo",
       "title": "LoRA SFT of MiniCPM-o",
-      "updated": "2026-10-28T17:20:00Z"
+      "updated": "2026-10-30T07:30:00Z"
     },
     {
       "id": "s14",
