@@ -225,3 +225,36 @@ and questions that left another value unasked).
 
 `check/fixround3/merged/delegation_v3.jsonl` holds 14,076 samples: train 12,686, dev 694, test 696; call 33.0%,
 handoff 31.0%, ask 15.7%, chat 10.6%, split 9.6%; filler 1,945, self-correction 728. Section C passes.
+
+## 6. Fourth fix round: the duplex format and the training-target review (2026-10-30)
+
+Reviewing the training target against the goal (MiniCPM-o calling tools and deciding to hand off, in full duplex)
+led to these changes (`apply_round4.py`):
+
+- **Acknowledge first.** A handoff or split reply now speaks its `say` first and then writes the calls, so the user
+  hears something in the first second instead of after two or three seconds of call tokens. Calls the assistant
+  makes alone (`call`) keep no acknowledgment: the fast tool answers within a second. Spoken first, a split `say`
+  must not present a result, so Claude checked all 1,353 in three passes and rewrote 807: lines that presented or
+  claimed a result ("Here's the ether rate"), lines with details the user never gave ("Party prep mode", a guessed
+  place for an opaque code), and lines that named only one of the two parts. The emergency sample test-00224 keeps
+  a line about the ambulance only.
+- **Invented details in handoff acknowledgments.** Writers imagined a scene for each sample and its details leaked
+  into the spoken line ("Now that's a graduation gift" when no graduation was mentioned, "the kids will love it",
+  a guess at what an opaque code is). Claude checked all 4,746 handoff acknowledgments (including those after an
+  ask's answer) and rewrote 1,076 (23%): invented occasions, purposes, audiences or people, predicted reactions,
+  guessed codes, a few that stated a result early or had a human doing the work. The cause is the writer prompt's
+  rule 7, which invited "a short reaction to the scene first"; future writing must drop it.
+- **Names in ID arguments.** A front-end call cannot look anything up, so a plain name in an ID argument the real
+  tool cannot resolve ("Stardew Valley" as a numeric app id) would fail. Claude judged 159 candidates: 61 such
+  calls, in 59 samples, are dropped; usernames, call signs, tickers and slugs stay.
+- **Failed and partial results.** Almost every backend result was a success, so the model never saw one fail. 78
+  handoffs (about 9% of those with a backend result) now carry a failed (26), partial (28) or needs-the-user (24)
+  result, and an answer that says so plainly, gives the part that worked and offers a next step. Ten samples about
+  biology or medicine were left out of this rewrite.
+
+Result: `check/fixround4/merged/delegation_v4.jsonl` holds 14,017 samples: train 12,632, dev 690, test 695; call
+33.2%, handoff 31.1%, ask 15.4%, chat 10.7%, split 9.7%; filler 1,940, self-correction 727. Section C passes.
+
+Two kinds of training sequence are added at build time, not as samples: about 800 two-request episodes (a handoff
+whose result arrives only after the user has asked something else and been answered) and self-distillation
+conversations that keep MiniCPM-o's own duplex behavior (see `duplex/README.md`).

@@ -5,7 +5,7 @@ requests over 14,168 real tool definitions, with the voice model holding only fa
 follows how Qwen-Audio-Agent's cockpit app places tools (by hand, per domain), with expected time in place of
 domain; the 0.5 s line is our own. Each tool is labeled fast or slow, each sample's target is
 fixed first, and an outside model writes a request that fits it. All 154 batches are written and checked
-(15,383 of 15,400 samples pass), and three fix passes for the problems the reviews found are done (14,076 samples remain, all spoken and laid out
+(15,383 of 15,400 samples pass), and four fix passes for the problems the reviews found are done (14,017 samples remain, all spoken and laid out
 as MiniCPM-o full-duplex sequences). A 10-sample smoke test showed LoRA training fits on the lab's 16 GB cards. Training has not
 started: it waits for your go-ahead.
 
@@ -27,6 +27,8 @@ The labeling rules and acceptance criteria are in [`DATA_SPEC.md`](DATA_SPEC.md)
 | 9. Draw the stratified review sample (DATA_SPEC D) | `make_review_sample.py` | `check/fixround2/review/review_sample.json` |
 | 10. Third round: flag API values read aloud, Claude review of every ask and chat, drop, top up asks (DATA_SPEC 5) | `flag_api_speech.py`, `export_ask_topup.py`, `import_writer_answers.py --plans`, `apply_round3.py` | `check/fixround3/merged/delegation_v3.jsonl` |
 | 11. Speak every user turn (Kokoro; spoken dates, pauses in 30% of requests) and build the duplex sequences | `duplex/tts.py --all`, `duplex/build_sequences.py` | `duplex_full/` (`audio/`, `seqs/`) |
+| 12. Fourth round: acknowledgments spoken first (split lines checked), names in ID arguments, failed and partial backend results (DATA_SPEC 6) | `apply_round4.py` | `check/fixround4/merged/delegation_v4.jsonl` |
+| 13. Self-distillation conversations that keep MiniCPM-o's own duplex behavior (DailyDialog user lines, the untrained model's own replies) | `duplex/self_distill.py` | `duplex_sd/` |
 | Smoke test of training | `make_smoke.py`, `run_smoke.sh`, `configs/` | `smoke/` |
 | Untrained baseline: MiniCPM-o 4.5 text chat mode on the test split | `baseline/run_baseline.py`, `baseline/score_baseline.py` | `baseline/` |
 | Duplex feasibility test: 200 spoken samples, LoRA, real duplex loop ([`duplex/README.md`](duplex/README.md)) | `duplex/` | `duplex/` |
@@ -123,11 +125,13 @@ The main line has since moved from Fun-Audio-Chat-8B to MiniCPM-o 4.5, which alr
 
 ## Next
 
-1. The data is ready: 14,076 samples after three fix passes (`DATA_SPEC.md` sections 3 to 5), section C passes,
-   every user turn is spoken (21,485 + 1,470 WAVs) and every sample is a duplex sequence in `duplex_full/seqs/`.
+1. The data is ready: 14,017 samples after four fix passes (`DATA_SPEC.md` sections 3 to 6), section C passes, and
+   every user turn is spoken. The duplex sequences are being rebuilt with the acknowledgment first, plus about 800
+   two-request episodes; the self-distillation conversations are being recorded.
 2. Each step only after a go-ahead:
    - LoRA SFT on the duplex sequences, as a learning curve (about 1,600, 3,300, 6,600 and all samples, one epoch
-     each, with 20-30% general dialogue mixed in), two cards per run;
+     each, with the self-distillation conversations mixed in), two cards per run;
    - evaluation in the real duplex loop on a larger held-out test set (300+ spoken samples, with ask asking and
-     chat never calling a tool as hard checks), a chat regression test, and FDB-v3;
+     chat never calling a tool as hard checks), duplex behavior against the untrained model (stopping when the
+     user cuts in, reply latency, talking over the user), a chat regression test, and FDB-v3;
    - the untrained duplex baseline on the same test set.
