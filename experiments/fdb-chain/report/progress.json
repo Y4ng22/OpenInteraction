@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-30T07:30:00Z",
+  "updated": "2026-10-30T14:15:00Z",
   "steps": [
     {
       "id": "s01",
@@ -117,11 +117,11 @@
       "id": "s12",
       "order": 13,
       "phase": "Train",
-      "status": "doing",
+      "status": "done",
       "title": "Untrained MiniCPM-o baseline",
-      "updated": "2026-10-30T07:30:00Z",
-      "pct": 70,
-      "note": "Done in text chat mode (full duplex has no tool-call path; TTS not run yet): official MiniCPM-o 4.5 code, fast tools + spawn_thinking, 692 test samples. Target accuracy 59.2%: call 61.2%, handoff 84.5%, ask 13.8%, split 49.3%, chat 62.4%. It over-hands-off (75 call and 25 chat items sent to the backend), almost never asks, and says nothing when it hands off (0 of 198). Reporting a backend result already works: 31/31 right after the handoff, 30/31 after an unrelated exchange. Now running in full duplex on speech, overnight: all 695 test samples with the result fed back, and a duplex-behavior check on 300 held-out conversations (stops when cut in, never speaks, says it is Qwen), the same checks every trained adapter will get."
+      "updated": "2026-10-30T14:15:00Z",
+      "pct": 100,
+      "note": "Done in text chat mode (full duplex has no tool-call path; TTS not run yet): official MiniCPM-o 4.5 code, fast tools + spawn_thinking, 692 test samples. Target accuracy 59.2%: call 61.2%, handoff 84.5%, ask 13.8%, split 49.3%, chat 62.4%. It over-hands-off (75 call and 25 chat items sent to the backend), almost never asks, and says nothing when it hands off (0 of 198). Reporting a backend result already works: 31/31 right after the handoff, 30/31 after an unrelated exchange. Full duplex on speech (695 test samples, result fed back): target right 142/695 (20.4%). Almost no tool calls: 30 items contain one, 22 of them unclosed. It says it will do the task, or asks, instead: 113 of 223 call items and 64 of 193 handoff items are talk only. Spoke before the user finished on 186. Of the 101 samples with a result it told the user on 39 and used a value on 31 (handoff 8/31). Behavior on 300 held-out conversations: 280 pass; 14 of 104 cut-ins kept speaking 3 s in, 4 never spoke, 2 said Qwen."
     },
     {
       "id": "s13",
@@ -130,7 +130,7 @@
       "phase": "Train",
       "status": "todo",
       "title": "LoRA SFT of MiniCPM-o",
-      "updated": "2026-10-30T07:30:00Z"
+      "updated": "2026-10-30T14:15:00Z"
     },
     {
       "id": "s14",

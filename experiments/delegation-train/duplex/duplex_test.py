@@ -231,8 +231,8 @@ def main():
             if ended_at is not None and t > ended_at:  # one silent second after the reply, as in training
                 break
         after = []
-        if args.with_result:
-            result = result_text(x)
+        result = result_text(x) if args.with_result else ""
+        if result:  # most samples have no result to feed
             u = unit(t + 1, text_list=[result])
             after.append(u)
             for k in range(args.silence_s):
@@ -246,7 +246,7 @@ def main():
                "interrupted": bool(spoke) and spoke[0] < n_speech - 1, "spoken": spoken, "raw_calls": calls,
                "units": units, **judge(x, spoken, calls, fast)}
         if args.with_result:
-            row["result"] = result_text(x)
+            row["result"] = result
             row["after"] = after
             row.update(judge_report(x, after))
         rows.append(row)
@@ -293,7 +293,7 @@ def report(args, rows):
         lines += ["", "After the result came back as a text unit:", "",
                   "| | items | tells the user | uses a value from the result | ≤ 60 words | calls again |", "|---|---|---|---|---|---|"]
         for t in ["all"] + TARGETS:
-            rs = [r for r in rows if t in ("all", r["target"])]
+            rs = [r for r in rows if r["result"] and t in ("all", r["target"])]
             if rs:
                 lines.append(f"| {t} | {len(rs)} | {sum(r['told'] for r in rs)} | {sum(r['uses_value'] for r in rs)} | "
                              f"{sum(r['told'] and r['answer_words'] <= 60 for r in rs)} | {sum(r['calls_again'] for r in rs)} |")

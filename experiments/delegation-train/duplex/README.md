@@ -78,6 +78,25 @@ Evaluation, base model now and each adapter later (`eval_v4/`):
 - duplex behavior on 300 held-out DailyDialog validation conversations (`self_distill.py prepare --prefix sdeval`,
   then `run` with and without `--lora`), scored with `filter_selfdistill.py`'s counts per timing.
 
+Base model in duplex on the fourth-round test set (`eval_v4/base/`, same system prompt and tools as training, greedy):
+
+| gold \ predicted | call | handoff | ask | split | chat | invalid | malformed | silent |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| call (223) | 5 | 0 | 84 | 0 | 113 | 0 | 13 | 8 |
+| handoff (193) | 1 | 0 | 110 | 0 | 64 | 0 | 4 | 14 |
+| ask (119) | 0 | 0 | 94 | 0 | 19 | 0 | 1 | 5 |
+| split (69) | 1 | 0 | 28 | 0 | 35 | 1 | 2 | 2 |
+| chat (91) | 0 | 0 | 45 | 0 | 43 | 0 | 2 | 1 |
+
+- Target right 142/695 (20.4%). It says "I'll get the forecast…" without calling anything, or asks for details it does
+  not need. 30 items contain a call, 22 of them unclosed; never a `spawn_thinking` that parses as a handoff.
+- Spoke before the user finished on 186 items.
+- 101 test samples carry a result (call 55, handoff 31, split 15). After it comes back the model tells the user on
+  39 (26, 8, 5), with a value from the result on 31 (24, 4, 3), and never calls again. Items without a result are no
+  longer scored in this table, and from now on no empty text unit is fed for them.
+- Duplex behavior on the 300 held-out conversations: 280 pass the filter (93.3%). 14 of 104 cut-ins kept speaking 3 s
+  in (13.5%), 4 never spoke, 2 said Qwen or Alibaba. These are the numbers a trained adapter must not get worse on.
+
 ## Pipeline
 
 | Step | File | Output (server, `/local/data/xy2764/delegation-train/duplex/`) |
