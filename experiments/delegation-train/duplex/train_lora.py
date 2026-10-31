@@ -99,6 +99,7 @@ def main():
     ap.add_argument("--selfdistill", type=Path, help="self_distill.py sequences, mixed into train")
     ap.add_argument("--sd-keep", type=Path, help="filter_selfdistill.py output; only kept conversations are used")
     ap.add_argument("--fraction", type=float, default=1.0, help="stratified share of the train rows (learning curve)")
+    ap.add_argument("--oversample", nargs="*", default=[], help="target=N: use that target's train rows N times (split=2)")
     ap.add_argument("--eval-split", default="test")
     ap.add_argument("--eval-n", type=int, default=0, help="stratified sample of the eval split (0: all of it)")
     ap.add_argument("--save-every", type=int, default=0, help="also save the adapter every this many steps")
@@ -118,6 +119,9 @@ def main():
     train = [r for r in rows if r["split"] == "train"]
     if args.fraction < 1:
         train = stratified(train, args.fraction, random.Random(args.seed))
+    for spec in args.oversample:
+        target, times = spec.split("=")
+        train += [r for r in train if r["target"] == target] * (int(times) - 1)
     test = [r for r in rows if r["split"] == args.eval_split]
     if args.eval_n:
         test = stratified(test, args.eval_n / len(test), random.Random(args.seed))
