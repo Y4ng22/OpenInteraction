@@ -211,6 +211,8 @@ def main():
     ap.add_argument("--silence-s", type=int, default=8)
     ap.add_argument("--decode", choices=["greedy", "sampling"], default="greedy", help="sampling uses the duplex defaults")
     ap.add_argument("--context-only", action="store_true", help="only samples with earlier context turns")
+    ap.add_argument("--ids", type=Path, help="JSON list: only these samples")
+    ap.add_argument("--ban-tts-bos", action="store_true", help="forbid <|tts_bos|>, which appears inside replies")
     ap.add_argument("--max-mem-gib", type=int, default=14)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--rescore", action="store_true", help="score <out>.jsonl again without running the model")
@@ -234,6 +236,8 @@ def main():
     allow = (set(json.loads(Path(args.allow).read_text())) if args.allow.endswith(".json")
              else {int(i) for i in args.allow.split(",") if i})
     duplex.decoder.forbidden_token_ids[:] = [i for i in duplex.decoder.forbidden_token_ids if i not in allow]
+    if args.ban_tts_bos:
+        duplex.decoder.forbidden_token_ids.append(tok.convert_tokens_to_ids("<|tts_bos|>"))
     script, decode = [], duplex.decoder.decode  # replay_context fills script; the decoder then says these tokens
 
     def scripted_decode(*a, **k):
@@ -249,6 +253,9 @@ def main():
     items = sorted({m["id"]: m for m in items}.values(), key=lambda m: m["id"])
     if args.context_only:
         items = [m for m in items if any(e.get("context") for e in gold[m["id"]]["events"])]
+    if args.ids:
+        keep = set(json.loads(args.ids.read_text()))
+        items = [m for m in items if m["id"] in keep]
     items = items[i_shard::n_shard]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
