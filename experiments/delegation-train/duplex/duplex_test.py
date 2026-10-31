@@ -13,6 +13,7 @@ first. The four tokens the training targets use from the duplex decoder's banned
 """
 import argparse
 import json
+import random
 import re
 from pathlib import Path
 
@@ -20,7 +21,7 @@ import numpy as np
 import soundfile as sf
 import torch
 
-from build_sequences import SR, system_prompt
+from build_sequences import OWN_END_UNIT, PACE, SR, steps, system_prompt
 
 OPEN, CLOSE = "<tool_call>", "</tool_call>"
 TARGETS = ["call", "handoff", "ask", "split", "chat"]
@@ -107,6 +108,43 @@ def result_text(x):
     return "".join(out)
 
 
+def replay_context(duplex, x, wavs, tok, script):
+    """Stream the turns before the scored one exactly as in training: the user's earlier line with the model
+    listening, then the earlier assistant line, one unit a second at the same pace. Returns the wav of the turn
+    the first reply answers."""
+    plan = steps(x)
+    first = next(i for i, (kind, _) in enumerate(plan) if kind == "reply")
+    listen, speak, chunk_eos, turn_eos = (tok.convert_tokens_to_ids(t) for t in ["<|listen|>", "<|speak|>", "<|chunk_eos|>", "<|turn_eos|>"])
+    pace = random.Random(x["id"])
+
+    def forced(chunk, tokens):
+        script[:] = tokens
+        duplex.streaming_prefill(audio_waveform=chunk)
+        duplex.streaming_generate()
+        assert not script
+
+    for i, (kind, value) in enumerate(plan[:first]):
+        if kind == "user" and i + 1 < first:
+            speech, _ = sf.read(wavs[value[1]]["path"], dtype="float32")
+            n = int(np.ceil(len(speech) / SR))
+            speech = np.pad(speech, (0, n * SR - len(speech))).astype(np.float32)
+            for j in range(n):
+                forced(speech[j * SR:(j + 1) * SR], [listen])
+        elif kind == "context":
+            body, units, j = tok.encode(value[0][1], add_special_tokens=False), [], 0
+            while j < len(body):
+                n = pace.choices(list(PACE), weights=list(PACE.values()))[0]
+                units.append([speak] + body[j:j + n] + [chunk_eos])
+                j += n
+            if len(units[-1]) <= 18 and pace.random() > OWN_END_UNIT:
+                units[-1] = units[-1][:-1] + [turn_eos, chunk_eos]
+            else:
+                units.append([speak, turn_eos, chunk_eos])
+            for u in units:
+                forced(np.zeros(SR, np.float32), u)
+    return wavs[plan[first - 1][1][1]]
+
+
 def judge_report(x, after):
     spoken, calls = intercept(first_turn(after))
     spoken = spoken.replace("<|turn_eos|>", "").strip()
@@ -172,6 +210,7 @@ def main():
                     help="banned token ids the training targets use: a comma list, or a JSON file (allowed_banned_ids.json)")
     ap.add_argument("--silence-s", type=int, default=8)
     ap.add_argument("--decode", choices=["greedy", "sampling"], default="greedy", help="sampling uses the duplex defaults")
+    ap.add_argument("--context-only", action="store_true", help="only samples with earlier context turns")
     ap.add_argument("--max-mem-gib", type=int, default=14)
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--rescore", action="store_true", help="score <out>.jsonl again without running the model")
@@ -195,13 +234,22 @@ def main():
     allow = (set(json.loads(Path(args.allow).read_text())) if args.allow.endswith(".json")
              else {int(i) for i in args.allow.split(",") if i})
     duplex.decoder.forbidden_token_ids[:] = [i for i in duplex.decoder.forbidden_token_ids if i not in allow]
+    script, decode = [], duplex.decoder.decode  # replay_context fills script; the decoder then says these tokens
+
+    def scripted_decode(*a, **k):
+        out = decode(*a, **k)
+        return torch.full_like(out, script.pop(0)) if script else out
+    duplex.decoder.decode = scripted_decode
 
     gold = {x["id"]: x for x in map(json.loads, args.final.read_text(encoding="utf-8").splitlines())}
     tools = {t["id"]: t for t in map(json.loads, args.tools.read_text(encoding="utf-8").splitlines())}
     items = [m for p in args.manifest for m in map(json.loads, p.read_text(encoding="utf-8").splitlines())
              if m["split"] == args.split and m["id"] in gold]
     i_shard, n_shard = map(int, args.shard.split("/"))
-    items = sorted({m["id"]: m for m in items}.values(), key=lambda m: m["id"])[i_shard::n_shard]
+    items = sorted({m["id"]: m for m in items}.values(), key=lambda m: m["id"])
+    if args.context_only:
+        items = [m for m in items if any(e.get("context") for e in gold[m["id"]]["events"])]
+    items = items[i_shard::n_shard]
     args.out.parent.mkdir(parents=True, exist_ok=True)
     rows = []
     for m in items:
@@ -209,7 +257,8 @@ def main():
         fast = {tools[i]["name"] for i in x["frontend_tools"] if i in tools}
         torch.manual_seed(0)
         duplex.prepare(prefix_system_prompt=system_prompt(x, tools))
-        speech, _ = sf.read(m["wavs"][0]["path"], dtype="float32")
+        wav = replay_context(duplex, x, m["wavs"], tok, script)
+        speech, _ = sf.read(wav["path"], dtype="float32")
         n_speech = int(np.ceil(len(speech) / SR))
         chunks = [speech[i * SR:(i + 1) * SR] for i in range(n_speech)] + [np.zeros(SR, np.float32)] * args.silence_s
         def unit(t, **feed):

@@ -78,6 +78,12 @@ Evaluation, base model now and each adapter later (`eval_v4/`):
 - duplex behavior on 300 held-out DailyDialog validation conversations (`self_distill.py prepare --prefix sdeval`,
   then `run` with and without `--lora`), scored with `filter_selfdistill.py`'s counts per timing.
 
+Correction (2026-10-30): this first version of the test played only the first spoken turn. About 35% of the test
+samples start with a context turn, so for those the model never heard the request it was scored on, and a trained
+model stayed silent on 56 of 232 items. `duplex_test.py` now replays the context turns as in training, and the base
+model is being rerun on those samples (`--context-only`, merged into `eval_v4/base/test_v2.jsonl`). The numbers
+below are from the first version.
+
 Base model in duplex on the fourth-round test set (`eval_v4/base/`, same system prompt and tools as training, greedy):
 
 | gold \ predicted | call | handoff | ask | split | chat | invalid | malformed | silent |
