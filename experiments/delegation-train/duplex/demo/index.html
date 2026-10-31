@@ -25,7 +25,7 @@ button{font:inherit;padding:8px 18px;border-radius:6px;border:1px solid var(--li
 <div id="log"></div></main>
 <script>
 const $=s=>document.querySelector(s), log=$('#log');
-const PREBUFFER=2; // seconds of voice held back at the start of a reply: speech is made a little slower than it plays
+const PREBUFFER=1; // seconds of voice held back at the start of a reply: speech is made a little slower than it plays
 let ctx, out, stream, node, queue=[], running=false, busy=false, buf=[], line=null, at=0, playing=[], held=[], heldS=0, flowing=false, cards={};
 const add=(cls,text)=>{const d=document.createElement('div');d.className=cls;d.textContent=text;log.append(d);log.scrollTop=log.scrollHeight;return d};
 function schedule(x){
@@ -69,7 +69,7 @@ async function pump(){
   busy=false;pump();
 }
 async function start(){
-  $('#go').disabled=true;$('#state').textContent='getting ready, up to 30 seconds';
+  $('#go').disabled=true;$('#state').textContent='starting';
   const r=await fetch('/reset',{method:'POST',body:''});if(!r.ok)throw new Error('server error '+r.status);
   log.textContent='';queue=[];buf=[];line=null;cards={};held=[];heldS=0;flowing=false;
   out=new AudioContext({sampleRate:24000});await out.resume();at=0;
@@ -81,6 +81,6 @@ async function start(){
       queue.push(all.slice(0,16000));const rest=all.slice(16000);buf=[rest];n=rest.length;pump()}};
   src.connect(node);node.connect(ctx.destination);running=true;$('#state').textContent='listening';$('#go').textContent='Stop';$('#go').disabled=false;
 }
-function stop(){running=false;fetch('/reset',{method:'POST',body:''});node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();hush();out&&out.close();$('#state').textContent='stopped';$('#go').textContent='Start'}
+function stop(){running=false;node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();hush();out&&out.close();$('#state').textContent='stopped';$('#go').textContent='Start'}
 $('#go').onclick=()=>running?stop():start().catch(e=>{add('w','Could not start: '+e.message);$('#state').textContent='stopped';$('#go').disabled=false});
 </script></body></html>

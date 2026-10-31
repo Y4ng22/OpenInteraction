@@ -56,20 +56,22 @@ def simulate(name, args):
 class Session:
     def __init__(self, duplex, tok, system, voice):
         self.duplex, self.tok, self.system, self.voice = duplex, tok, system, voice
-        self.lock, self.cache, self.fresh, self.n_call = threading.Lock(), None, False, 0
+        self.lock, self.cache, self.n_call = threading.Lock(), None, 0
         self.reset()
 
     def reset(self):
         with self.lock:  # a second Start while the first is still preparing would corrupt the decoder
-            if self.fresh:  # streaming the system prompt in takes 30 s, so it is done ahead of Start
-                return
             d, cache = self.duplex, self.cache
+            feed, held = d.decoder.feed, []  # one token at a time this takes 30 s; the decoder takes them all at once
+            d.decoder.feed = lambda embeds, return_logits=False: held.append(embeds)
             d.prepare(prefix_system_prompt=self.system, prompt_wav_path=None if cache else self.voice)
+            d.decoder.feed = feed
+            feed(torch.cat(held))
             if cache:
                 d.flow_cache_base, d.hift_cache_base, d.token2wav_initialized = *cache, True
                 d._reset_token2wav_for_new_turn()
             self.cache = d.flow_cache_base, d.hift_cache_base
-            self.in_call, self.call, self.calls, self.queue, self.t, self.fresh, self.n_call = False, "", [], [], 0, True, 0
+            self.in_call, self.call, self.calls, self.queue, self.t, self.n_call = False, "", [], [], 0, 0
 
     def out(self):
         """Text since the last call, split into what is spoken and the finished tool calls."""
@@ -124,7 +126,7 @@ class Session:
 
     def unit(self, pcm):
         with self.lock:
-            t0, parts, delivered, self.fresh = time.time(), [], [], False
+            t0, parts, delivered = time.time(), [], []
             for item in [q for q in self.queue if q[0] <= self.t]:
                 self.queue.remove(item)
                 text = "<tool_response>" + json.dumps(item[3], ensure_ascii=False) + "</tool_response>"
