@@ -258,3 +258,32 @@ Result: `check/fixround4/merged/delegation_v4.jsonl` holds 14,017 samples: train
 Two kinds of training sequence are added at build time, not as samples: about 800 two-request episodes (a handoff
 whose result arrives only after the user has asked something else and been answered) and self-distillation
 conversations that keep MiniCPM-o's own duplex behavior (see `duplex/README.md`).
+
+## 7. Short requests and unfinished speech (2026-10-31)
+
+Trying the trained model in a browser showed that it understood short requests and then never answered. The data
+explains it: of the 15,479 single-turn training clips, 2 are 2 s or shorter and 160 are 3 s, and the fixed test has
+none under 3 s, so the 89.6% test score says nothing about them. This round adds both halves of the behavior:
+answer a short complete request, and keep listening when someone stops mid-sentence, so the model does not learn to
+jump in. Claude wrote and reviewed the new samples; neither step used Qwen3-14B.
+
+- **Short requests** (`group: short`, `export_short_tasks.py`): at most 8 words, for call, handoff, ask and chat. A split
+  needs two requests, so it has none. Train plans use train-domain tools and dev/test plans the held-out ones. 15% have
+  one earlier exchange and 10% a filler. None carries a tool result.
+- **Unfinished speech** (`group: unfinished`, `import_short.py`): reviewed samples, unchanged, with `pause_after`, a first
+  part of 2 to 5 words ending on a word a sentence cannot end on. `tts.py` puts 1 to 2 s of silence there. They come from
+  plain v4 samples and from the short requests, keep their original split, and leave out split.
+
+`import_short.py` runs the shared schema and grounding checks plus limits on length, acknowledgments, questions and
+repeats. A separate Claude agent then read every sample of the 2,194 in the pool:
+
+| Group | Reviewed | Rejected | Main reason |
+|---|---|---|---|
+| call | 442 | 73 | tool wording or parameters read aloud, not how a person talks |
+| handoff | 407 | 91 | the same, and objectives that were not faithful |
+| ask | 251 | 127 | requests written around a placeholder ("Find the owner of a dataset") |
+| chat | 548 | 92 | 59 near-duplicates |
+| unfinished | 546 | 3 | the first part could stand alone, or the cut split a title or phrase |
+
+`check/short/delegation_short.jsonl` holds 1,682 samples: 1,262 short (train call 317, handoff 262, ask 83, chat 393;
+dev 68; test 139) and 420 unfinished (train 300, dev 40, test 80). Ask is well under its plan of 200 in train.

@@ -32,6 +32,7 @@ ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
           "November", "December"]
 PAUSE_SHARE, PAUSE_S = 0.3, (0.5, 2.0)
+PAUSE_EARLY = (1.0, 2.0)
 SR = 16000
 
 
@@ -74,8 +75,11 @@ def speak_all(args, X, pipe):
         for k, e in enumerate(e for e in x["events"] if e["role"] == "user"):
             path = args.out / "audio" / f"{x['id']}_{k}.wav"
             text = spoken_form(e["text"])
-            parts = pause_split(text, rng) if not e.get("context") and rng.random() < PAUSE_SHARE else None
+            parts = pause_split(text, rng) if not x.get("group") and not e.get("context") and rng.random() < PAUSE_SHARE else None
             pause = round(rng.uniform(*PAUSE_S), 2) if parts else 0.0
+            if e.get("pause_after"):  # an unfinished sample stops mid-sentence (DATA_SPEC section 7)
+                head = spoken_form(e["pause_after"])
+                parts, pause = (head, text[len(head):].strip()), round(rng.uniform(*PAUSE_EARLY), 2)
             if not path.exists():
                 audio = (synth(pipe, voice, text) if not parts else
                          np.concatenate([synth(pipe, voice, parts[0]), np.zeros(int(pause * SR), np.float32),
