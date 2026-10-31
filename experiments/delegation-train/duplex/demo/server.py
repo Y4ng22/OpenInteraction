@@ -1,14 +1,15 @@
 """Try a trained adapter from a browser: one session, one second of microphone audio per request.
 
-The browser posts each second of 16 kHz audio to /unit and speaks the text it gets back with its own speech synthesis,
-because the model's TTS weights are not on the server. Tool calls are held back from speech and answered with
-simulated results: fast tools one second after the reply, the backend a few seconds later. The server binds to
-localhost only; open it through an SSH tunnel.
+The browser posts each second of 16 kHz audio to /unit and plays the model's own voice from the reply. Tool calls are
+held back from speech and answered with simulated results: fast tools one second after the reply, the backend a few
+seconds later. The server binds to localhost only; open it through an SSH tunnel. The waveform decoder needs onnx,
+onnxruntime and a few others that the training env lacks, so they sit in their own folder on PYTHONPATH.
 
-    python demo/server.py --src <snapshot> --lora runs/lc_1 --tools ../data/tools_split.jsonl \
-        --allow ../duplex_full/allowed_banned_ids_v4.json --port 8765
+    PYTHONPATH=/local/data/xy2764/envs/demo-site python demo/server.py --src <snapshot> --lora runs/lc_1 \
+        --tools ../data/tools_split.jsonl --allow ../duplex_full/allowed_banned_ids_v4.json --port 8765
 """
 import argparse
+import base64
 import json
 import re
 import sys
@@ -34,13 +35,13 @@ BACKEND_DELAY = 6  # units
 
 
 class Session:
-    def __init__(self, duplex, tok, system):
-        self.duplex, self.tok, self.system = duplex, tok, system
+    def __init__(self, duplex, tok, system, voice):
+        self.duplex, self.tok, self.system, self.voice = duplex, tok, system, voice
         self.lock = threading.Lock()
         self.reset()
 
     def reset(self):
-        self.duplex.prepare(prefix_system_prompt=self.system)
+        self.duplex.prepare(prefix_system_prompt=self.system, prompt_wav_path=self.voice)
         self.in_call, self.call, self.calls, self.queue, self.t = False, "", [], [], 0
 
     def out(self):
@@ -65,10 +66,12 @@ class Session:
     def step(self, **feed):
         self.before = len(self.duplex.res_ids)
         if not self.duplex.streaming_prefill(**feed)["success"]:
-            return {"text": "", "calls": [], "listen": True, "ended": False}
-        got = self.duplex.streaming_generate(decode_mode="greedy")
-        text, calls, ended = self.out()
-        return {"text": text, "calls": calls, "listen": got["is_listen"], "ended": ended}
+            return {"text": "", "calls": [], "listen": True, "ended": False, "audio": None}
+        self.duplex.generate_audio = not self.in_call  # the voice decoder has no business reading JSON
+        got = self.duplex.streaming_generate(prompt_wav_path=self.voice, decode_mode="greedy")
+        was_call, (text, calls, ended) = self.in_call, self.out()
+        audio = None if got["is_listen"] or was_call or calls or self.in_call else got["audio_waveform"]
+        return {"text": text, "calls": calls, "listen": got["is_listen"], "ended": ended, "audio": audio}
 
     def answer(self, call):
         try:
@@ -95,7 +98,9 @@ class Session:
                 self.queue += [a for a in map(self.answer, self.calls) if a]
                 self.calls = []
             self.t += 1
-            return {"text": "".join(p["text"] for p in parts), "calls": calls, "results": delivered, "listen": parts[-1]["listen"],
+            voice = [p["audio"] for p in parts if p["audio"] is not None]
+            audio = base64.b64encode(np.concatenate(voice).astype(np.float32).tobytes()).decode() if voice else ""
+            return {"text": "".join(p["text"] for p in parts), "audio": audio, "calls": calls, "results": delivered, "listen": parts[-1]["listen"],
                     "ended": any(p["ended"] for p in parts), "ms": round(1000 * (time.time() - t0))}
 
 
@@ -137,11 +142,11 @@ def main():
     args = ap.parse_args()
     model = AutoModel.from_pretrained(args.src, trust_remote_code=True, attn_implementation="sdpa", torch_dtype=torch.bfloat16,
                                       init_vision=False, init_audio=True, init_tts=True, device_map="auto",
-                                      max_memory={g: "14GiB" for g in range(torch.cuda.device_count())}).eval()
+                                      max_memory={0: "2GiB", 1: "14GiB", 2: "14GiB"}).eval()  # the voice decoder takes card 0
     merge_lora(model.llm, args.lora)
     tok = AutoTokenizer.from_pretrained(args.src, trust_remote_code=True)
-    model.init_tts = lambda *a, **k: None
-    duplex = model.as_duplex(generate_audio=False)
+    model.init_tts(enable_float16=True, n_timesteps=5)  # 10 steps runs slower than real time on these cards
+    duplex = model.as_duplex(generate_audio=True)
     allow = set(json.loads(args.allow.read_text()))
     duplex.decoder.forbidden_token_ids[:] = [i for i in duplex.decoder.forbidden_token_ids if i not in allow] + [TTS_BOS]
     tools = {}
@@ -152,7 +157,7 @@ def main():
     system = system_prompt({"frontend_tools": list(tools)}, tools)
     print("tools:", [t["name"] for t in tools.values()], flush=True)
     print("ready", flush=True)
-    serve(Session(duplex, tok, system), args.port)
+    serve(Session(duplex, tok, system, str(args.src / "assets/system_ref_audio.wav")), args.port)
 
 
 if __name__ == "__main__":
