@@ -287,3 +287,7 @@ repeats. A separate Claude agent then read every sample of the 2,194 in the pool
 
 `check/short/delegation_short.jsonl` holds 1,682 samples: 1,262 short (train call 317, handoff 262, ask 83, chat 393;
 dev 68; test 139) and 420 unfinished (train 300, dev 40, test 80). Ask is well under its plan of 200 in train.
+
+Spoken, the short requests have a median of 2.7 s, and 188 run past 3.5 s (longest 5.9 s). `make_short_review.py` draws
+your review sample: 30 per target and 40 unfinished, with the same bar as section 2 D (95% right target, 90% fully
+correct). Fine-tuning starts only after that review and your go-ahead.
