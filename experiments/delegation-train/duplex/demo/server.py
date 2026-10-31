@@ -1,8 +1,8 @@
 """Try a trained adapter from a browser: one session, one second of microphone audio per request.
 
 The browser posts each second of 16 kHz audio to /unit and plays the model's own voice from the reply. Tool calls are
-held back from speech and answered with simulated results: fast tools one second after the reply, the backend a few
-seconds later. The server binds to localhost only; open it through an SSH tunnel. The waveform decoder needs onnx,
+held back from speech and answered with simulated results built from their arguments: fast tools two seconds after
+the call, the backend six. The server binds to localhost only; open it through an SSH tunnel. The waveform decoder needs onnx,
 onnxruntime and a few others that the training env lacks, so they sit in their own folder on PYTHONPATH.
 
     PYTHONPATH=/local/data/xy2764/envs/demo-site python demo/server.py --src <snapshot> --lora runs/lc_1 \
@@ -28,16 +28,35 @@ from duplex_test import CLOSE, OPEN, merge_lora
 
 TTS_BOS = 151703  # appears inside replies and breaks call JSON; never useful in text
 FRONTEND = ["hourlyWeatherSnapshot", "make_todo_list", "getChildVaccinationStatus", "Body Mass Index Calculator"]
-RESULTS = {"hourlyWeatherSnapshot": {"temperature_f": 58, "condition": "partly cloudy", "wind_mph": 9},
-           "make_todo_list": {"status": "created", "items": 3},
-           "getChildVaccinationStatus": {"status": "up to date", "next_due": "2027-03-01"}}
 BACKEND_DELAY = 6  # units
+
+
+def number(args, *names):
+    for n in names:
+        if isinstance(args.get(n), (int, float)):
+            return float(args[n])
+
+
+def simulate(name, args):
+    """A made-up result built from the call's own arguments, so a wrong argument shows in what comes back."""
+    if name == "spawn_thinking":
+        return {"status": "completed", "result": f"Finished: {args.get('objective')}. Everything went as planned."}
+    if name == "hourlyWeatherSnapshot":
+        return {"request": args, "temperature_f": 58, "condition": "partly cloudy", "wind_mph": 9}
+    if name == "make_todo_list":
+        return {"status": "created", "tasks": args.get("tasks") or args}
+    if name == "getChildVaccinationStatus":
+        return {"child": args.get("child_name") or args, "status": "up to date", "next_due": "2027-03-01"}
+    if name == "Body Mass Index Calculator":
+        h, w = number(args, "height", "height_cm"), number(args, "weight", "weight_kg")
+        return {"bmi": round(w / (h / 100) ** 2, 1)} if h and w else {"error": "height and weight are needed"}
+    return {"status": "ok"}
 
 
 class Session:
     def __init__(self, duplex, tok, system, voice):
         self.duplex, self.tok, self.system, self.voice = duplex, tok, system, voice
-        self.lock, self.cache, self.fresh = threading.Lock(), None, False
+        self.lock, self.cache, self.fresh, self.n_call = threading.Lock(), None, False, 0
         self.reset()
 
     def reset(self):
@@ -50,7 +69,7 @@ class Session:
                 d.flow_cache_base, d.hift_cache_base, d.token2wav_initialized = *cache, True
                 d._reset_token2wav_for_new_turn()
             self.cache = d.flow_cache_base, d.hift_cache_base
-            self.in_call, self.call, self.calls, self.queue, self.t, self.fresh = False, "", [], [], 0, True
+            self.in_call, self.call, self.calls, self.queue, self.t, self.fresh, self.n_call = False, "", [], [], 0, True, 0
 
     def out(self):
         """Text since the last call, split into what is spoken and the finished tool calls."""
@@ -74,42 +93,50 @@ class Session:
     def step(self, **feed):
         self.before = len(self.duplex.res_ids)
         if not self.duplex.streaming_prefill(**feed)["success"]:
-            return {"text": "", "calls": [], "listen": True, "ended": False, "audio": None}
+            return {"text": "", "calls": [], "listen": True, "ended": False, "audio": None, "cost": {}}
         self.duplex.generate_audio = not self.in_call  # the voice decoder has no business reading JSON
         got = self.duplex.streaming_generate(prompt_wav_path=self.voice, decode_mode="greedy")
         was_call, (text, calls, ended) = self.in_call, self.out()
         audio = None if got["is_listen"] or was_call or calls or self.in_call else got["audio_waveform"]
-        return {"text": text, "calls": calls, "listen": got["is_listen"], "ended": ended, "audio": audio}
+        return {"text": text, "calls": calls, "listen": got["is_listen"], "ended": ended, "audio": audio,
+                "cost": {k: round(1000 * got.get(k) or 0) for k in ("cost_llm", "cost_tts", "cost_token2wav")}}
 
     def answer(self, call):
+        """(when, what the page shows, simulated result) for a finished call."""
+        self.n_call += 1
+        shown = {"id": self.n_call, "raw": call}
         try:
             c = json.loads(call)
-        except json.JSONDecodeError:
-            return None
-        if c["name"] == "spawn_thinking":
-            return self.t + BACKEND_DELAY, {"status": "completed", "result": "Simulated backend result. Nothing was really done for: "
-                                            + str(c["arguments"].get("objective"))}
-        return self.t + 2, RESULTS.get(c["name"], {"status": "ok", "note": "simulated result"})
+            name, args = c["name"], c["arguments"]
+        except (json.JSONDecodeError, KeyError, TypeError):
+            return shown, None
+        shown.update(name=name, arguments=args)
+        return shown, (self.t + (BACKEND_DELAY if name == "spawn_thinking" else 2), self.n_call, name, simulate(name, args))
+
+    def enqueue(self, calls):
+        shown = []
+        for call in calls:
+            item, due = self.answer(call)
+            shown.append(item)
+            if due:
+                self.queue.append(due)
+        return shown
 
     def unit(self, pcm):
         with self.lock:
             t0, parts, delivered, self.fresh = time.time(), [], [], False
             for item in [q for q in self.queue if q[0] <= self.t]:
                 self.queue.remove(item)
-                text = "<tool_response>" + json.dumps(item[1], ensure_ascii=False) + "</tool_response>"
-                delivered.append(item[1])
+                text = "<tool_response>" + json.dumps(item[3], ensure_ascii=False) + "</tool_response>"
+                delivered.append({"id": item[1], "name": item[2], "result": item[3]})
                 parts.append(self.step(text_list=[text]))
             parts.append(self.step(audio_waveform=pcm))
-            calls = [c for p in parts for c in p["calls"]]
-            self.calls += calls
-            if any(p["ended"] for p in parts):
-                self.queue += [a for a in map(self.answer, self.calls) if a]
-                self.calls = []
-            self.t += 1
+            calls = self.enqueue([c for p in parts for c in p["calls"]])
             voice = [p["audio"] for p in parts if p["audio"] is not None]
             audio = base64.b64encode(np.concatenate(voice).astype(np.float32).tobytes()).decode() if voice else ""
+            self.t += 1
             return {"text": "".join(p["text"] for p in parts), "audio": audio, "calls": calls, "results": delivered, "listen": parts[-1]["listen"],
-                    "ended": any(p["ended"] for p in parts), "ms": round(1000 * (time.time() - t0))}
+                    "ended": any(p["ended"] for p in parts), "ms": round(1000 * (time.time() - t0)), "cost": parts[-1].get("cost")}
 
 
 def serve(session, port):
