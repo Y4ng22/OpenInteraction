@@ -1,0 +1,50 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Duplex Delegation Demo</title>
+<style>
+:root{--bg:#f6f7f9;--panel:#fff;--ink:#1b2430;--muted:#5b6676;--line:#dfe3ea;--you:#4b5563;--model:#0f766e;--tool:#4338ca;--warn:#b45309}
+@media (prefers-color-scheme:dark){:root{--bg:#12161c;--panel:#1a2029;--ink:#e4e8ee;--muted:#9aa5b4;--line:#2c3440;--you:#c0c7d2;--model:#5eead4;--tool:#a5b4fc;--warn:#fbbf24;color-scheme:dark}}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 system-ui,-apple-system,sans-serif}
+main{max-width:720px;margin:0 auto;padding:24px 16px;display:grid;gap:14px}
+h1{font-size:22px;margin:0}p{margin:0;color:var(--muted)}
+.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+button{font:inherit;padding:8px 18px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
+#state,#lag{font:12px ui-monospace,Menlo,monospace;color:var(--muted)}
+#log{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:320px;display:grid;gap:8px;align-content:start;overflow-wrap:anywhere}
+.m{color:var(--model)}.t{color:var(--tool);font:13px ui-monospace,Menlo,monospace}.r{color:var(--muted);font:13px ui-monospace,Menlo,monospace}.w{color:var(--warn)}
+</style></head><body><main>
+<h1>Duplex delegation demo</h1>
+<p>Use headphones, or the model hears itself. Ask for something quick (“what's the weather in Denver at 3 p.m.?”, “make me a list: milk, eggs”), something that needs real work (“plan a trip to Lisbon”), or both at once. English only. Tool results are simulated, and the voice is your browser's, not the model's.</p>
+<div class="bar"><button id="go">Start</button><span id="state">stopped</span><span id="lag"></span></div>
+<div id="log"></div></main>
+<script>
+const $=s=>document.querySelector(s), log=$('#log');
+let ctx, stream, node, queue=[], running=false, busy=false, buf=[], sayBuf='', line=null;
+const add=(cls,text)=>{const d=document.createElement('div');d.className=cls;d.textContent=text;log.append(d);log.scrollTop=log.scrollHeight;return d};
+function say(text){sayBuf+=text;const m=sayBuf.match(/^[\s\S]*[.!?,;:]\s/);if(m){speak(m[0]);sayBuf=sayBuf.slice(m[0].length)}}
+function speak(t){if(t.trim()){const u=new SpeechSynthesisUtterance(t);u.lang='en-US';speechSynthesis.speak(u)}}
+async function pump(){
+  if(busy||!queue.length)return;busy=true;const pcm=queue.shift();
+  try{
+    const r=await (await fetch('/unit',{method:'POST',body:pcm.buffer})).json();
+    if(r.text){if(!line)line=add('m','');line.textContent+=r.text;say(r.text)}
+    r.calls.forEach(c=>add('t','tool call: '+c));
+    r.results.forEach(c=>add('r','simulated result: '+JSON.stringify(c)));
+    if(r.listen&&line&&!r.ended){speechSynthesis.cancel();sayBuf=''}
+    if(r.ended){speak(sayBuf);sayBuf='';line=null}
+    $('#lag').textContent=`${r.ms} ms per second of audio, ${queue.length} s behind`;
+  }catch(e){add('w','Lost the server: '+e.message);stop()}
+  busy=false;pump();
+}
+async function start(){
+  await fetch('/reset',{method:'POST',body:''});log.textContent='';queue=[];buf=[];sayBuf='';line=null;
+  stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
+  ctx=new AudioContext({sampleRate:16000});const src=ctx.createMediaStreamSource(stream);
+  node=ctx.createScriptProcessor(4096,1,1);let n=0;
+  node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);buf.push(new Float32Array(x));n+=x.length;
+    if(n>=16000){const all=new Float32Array(n);let i=0;buf.forEach(b=>{all.set(b,i);i+=b.length});
+      queue.push(all.slice(0,16000));const rest=all.slice(16000);buf=[rest];n=rest.length;pump()}};
+  src.connect(node);node.connect(ctx.destination);running=true;$('#state').textContent='listening';$('#go').textContent='Stop';
+}
+function stop(){running=false;node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();speechSynthesis.cancel();$('#state').textContent='stopped';$('#go').textContent='Start'}
+$('#go').onclick=()=>running?stop():start().catch(e=>add('w','Could not start: '+e.message));
+</script></body></html>
