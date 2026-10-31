@@ -8,7 +8,9 @@ main{max-width:720px;margin:0 auto;padding:24px 16px;display:grid;gap:14px}
 h1{font-size:22px;margin:0}p{margin:0;color:var(--muted)}
 .bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
 button{font:inherit;padding:8px 18px;border-radius:6px;border:1px solid var(--line);background:var(--panel);color:var(--ink);cursor:pointer}
-#state,#lag{font:12px ui-monospace,Menlo,monospace;color:var(--muted)}
+label{font-size:13px;color:var(--muted);display:flex;gap:6px;align-items:center}
+#state,#lag,#mic{font:12px ui-monospace,Menlo,monospace;color:var(--muted)}
+#meter{width:120px;height:8px;border-radius:4px;background:var(--line);overflow:hidden}#meter i{display:block;height:100%;width:0;background:var(--model)}
 #log{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;min-height:320px;display:grid;gap:8px;align-content:start;overflow-wrap:anywhere}
 .m{color:var(--model)}.w{color:var(--warn)}
 #tools{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:center;font-size:13px;color:var(--muted)}
@@ -19,26 +21,32 @@ button{font:inherit;padding:8px 18px;border-radius:6px;border:1px solid var(--li
 .card pre{margin:0;font:12.5px/1.45 ui-monospace,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;color:var(--muted)}
 </style></head><body><main>
 <h1>Duplex delegation demo</h1>
-<p>Use headphones, or the model hears itself. English only.</p>
+<p>English only. Replies start about 2 seconds after you stop talking.</p>
 <div id="tools"><span>Fast tools</span><b>weather</b><b>to-do list</b><b>child vaccination record</b><b>BMI</b><span>Everything else goes to the</span><b>backend</b><span>All results are simulated from what the model passes in.</span></div>
-<div class="bar"><button id="go">Start</button><span id="state">stopped</span><span id="lag"></span></div>
+<div class="bar"><button id="go">Start</button><label><input type="checkbox" id="phones">I'm on headphones</label><button id="heard" disabled>Play what the model heard</button></div>
+<div class="bar"><span id="state">stopped</span><div id="meter"><i></i></div><span id="mic"></span><span id="lag"></span></div>
 <div id="log"></div></main>
 <script>
 const $=s=>document.querySelector(s), log=$('#log');
-const PREBUFFER=1; // seconds of voice held back at the start of a reply: speech is made a little slower than it plays
-let ctx, out, stream, node, queue=[], running=false, busy=false, buf=[], line=null, at=0, playing=[], held=[], heldS=0, flowing=false, cards={};
+const FRAME=320, UNIT=50;    // 20 ms frames, 50 to the second the model works in
+const HOLD=10, HANG=25;      // keep 200 ms back to catch the start of a word; 500 ms of quiet ends speech
+const TARGET=.08, MAX_GAIN=12; // the speech level the model was trained on, and how far to lift a quiet microphone
+const NEXT=25;               // frames from the end of speech to the next model second
+const LEAD=.15;              // seconds of cushion when voice starts playing
+let ctx, out, stream, node, queue=[], running=false, busy=false, line=null, at=0, playing=[], cards={};
+let frames=[], part=new Float32Array(FRAME), fill=0, floor=.01, level=TARGET, talking=false, voiced=0, quiet=0, gate=0;
+let phones=false, cutting=false, turn=0, mute=0, session=0, endAt=0, heard=[];
+window.stats=[];
 const add=(cls,text)=>{const d=document.createElement('div');d.className=cls;d.textContent=text;log.append(d);log.scrollTop=log.scrollHeight;return d};
-function schedule(x){
+const rms=x=>Math.sqrt(x.reduce((a,v)=>a+v*v,0)/x.length);
+const gain=()=>Math.min(MAX_GAIN,Math.max(1,TARGET/level));
+function play(x){
   const b=out.createBuffer(1,x.length,24000);b.copyToChannel(x,0);const s=out.createBufferSource();s.buffer=b;s.connect(out.destination);
-  at=Math.max(at,out.currentTime+.05);s.start(at);at+=b.duration;playing.push(s);s.onended=()=>{playing=playing.filter(p=>p!==s)};
+  if(at<out.currentTime+.02)at=out.currentTime+LEAD;
+  s.start(at);at+=b.duration;playing.push(s);s.onended=()=>{playing=playing.filter(p=>p!==s)};
+  if(endAt){const s=(performance.now()-endAt)/1000+LEAD;stats.push(s);show(s);endAt=0}
 }
-function flush(){held.forEach(schedule);held=[];heldS=0;flowing=true}
-function play(b64){
-  const x=new Float32Array(Uint8Array.from(atob(b64),c=>c.charCodeAt(0)).buffer);
-  if(flowing&&at>out.currentTime)return schedule(x);
-  flowing=false;held.push(x);heldS+=x.length/24000;if(heldS>=PREBUFFER)flush();
-}
-function hush(){playing.forEach(s=>{try{s.stop()}catch(e){}});playing=[];at=0;held=[];heldS=0;flowing=false}
+function hush(){playing.forEach(s=>{try{s.stop()}catch(e){}});playing=[];at=0}
 function card(c){
   const d=document.createElement('div');d.className='card'+(c.name?'':' bad');
   const label=c.name==='spawn_thinking'?'Backend task':c.name||'Unreadable call';
@@ -53,34 +61,77 @@ function finish(r){
   c.d.querySelector('.st').textContent=`simulated result, ${((Date.now()-c.t)/1000).toFixed(1)} s`;
   const o=c.d.querySelector('.out');o.hidden=false;o.textContent=JSON.stringify(r.result,null,1);
 }
-const loud=x=>Math.sqrt(x.reduce((a,v)=>a+v*v,0)/x.length)>.02; // a real cut-in, not the model pausing
+let last=0, lastMs=0;
+function show(s){if(s)last=s;$('#lag').textContent=`${lastMs} ms per second, ${queue.length} s behind`+(last?`, last reply ${last.toFixed(1)} s`:'')}
+function send(list){ // the frames become one model second; a short list leaves the rest as silence
+  const pcm=new Float32Array(16000), g=gain();
+  list.forEach((f,i)=>{const to=f.on?1:0;
+    for(let j=0;j<FRAME;j++){const v=f.x[j]*g*(gate+(to-gate)*j/FRAME);pcm[i*FRAME+j]=Math.max(-1,Math.min(1,v))}
+    gate=to});
+  if(pcm.some(v=>v))queue=queue.filter(q=>q.some(v=>v)); // quiet seconds must not hold up someone talking
+  queue.push(pcm);heard.push(pcm);if(heard.length>30)heard.shift();pump();
+}
+function ended(){ // the model replies on hearing silence, so give it that silence now rather than a second later
+  endAt=performance.now()-HANG*20;
+  while(frames.length>UNIT)send(frames.splice(0,UNIT));
+  send(frames.splice(0));
+  if(!(out&&at>out.currentTime))send([]);
+  const zero=new Float32Array(FRAME);frames=Array.from({length:UNIT+HOLD-NEXT},()=>({x:zero,on:false}));
+}
+function frame(x){
+  const e=rms(x), v=e>Math.max(.004,floor*3);
+  floor=e<floor?e:floor*1.002;voiced=v?voiced+1:0;quiet=v?0:quiet+1;
+  frames.push({x,on:talking});
+  if(v&&talking)level+=(e-level)*.08;
+  if(!talking&&voiced>=3){
+    talking=true;endAt=0;frames.slice(-HOLD).forEach(f=>f.on=true);
+    if(phones&&out&&at>out.currentTime){hush();mute=turn+1;cutting=true}
+  }else if(talking&&quiet>=HANG){talking=false;cutting=false;ended()}
+  while(frames.length>=UNIT+HOLD)send(frames.splice(0,UNIT));
+  $('#meter i').style.width=Math.min(100,e*gain()/TARGET*50)+'%';
+  $('#mic').textContent=gain()>=MAX_GAIN?'mic very quiet':gain()>1.5?`mic gain ×${gain().toFixed(1)}`:'mic ok';
+}
+function take(x){for(const v of x){part[fill++]=v;if(fill===FRAME){frame(part);part=new Float32Array(FRAME);fill=0}}}
 async function pump(){
   if(busy||!queue.length)return;busy=true;const pcm=queue.shift();
   try{
-    const r=await (await fetch('/unit',{method:'POST',body:pcm.buffer})).json();
-    if(r.text){if(!line)line=add('m','');line.textContent+=r.text}
-    if(r.audio)play(r.audio);else if(held.length)flush();
-    r.calls.forEach(c=>{line=null;card(c)});
-    r.results.forEach(c=>{line=null;finish(c)});
-    if(r.ended){flush();line=null}
-    else if(r.listen&&line){line=null;if(loud(pcm))hush();else flush()}
-    $('#lag').textContent=`${r.ms} ms per second of audio, ${queue.length} s behind`;
+    const r=await (await fetch(cutting?'/unit?cut':out&&at+.5>out.currentTime?'/unit?playing':'/unit',{method:'POST',body:pcm.buffer.slice(0)})).json();
+    turn=r.turn;lastMs=r.ms;
+    r.events.forEach(e=>{
+      if(e.text){if(!line)line=add('m','');line.textContent+=e.text}
+      else{line=null;e.call?card(e.call):finish(e.result)}
+    });
+    if(r.ended)line=null;
+    else if(r.listen&&line){line=null;if(rms(pcm)>.02){hush();mute=turn}}
+    show();
   }catch(e){add('w','Lost the server: '+e.message);stop()}
   busy=false;pump();
 }
-async function start(){
-  $('#go').disabled=true;$('#state').textContent='starting';
-  const r=await fetch('/reset',{method:'POST',body:''});if(!r.ok)throw new Error('server error '+r.status);
-  log.textContent='';queue=[];buf=[];line=null;cards={};held=[];heldS=0;flowing=false;
-  out=new AudioContext({sampleRate:24000});await out.resume();at=0;
-  stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
-  ctx=new AudioContext({sampleRate:16000});const src=ctx.createMediaStreamSource(stream);
-  node=ctx.createScriptProcessor(4096,1,1);let n=0;
-  node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);buf.push(new Float32Array(x));n+=x.length;
-    if(n>=16000){const all=new Float32Array(n);let i=0;buf.forEach(b=>{all.set(b,i);i+=b.length});
-      queue.push(all.slice(0,16000));const rest=all.slice(16000);buf=[rest];n=rest.length;pump()}};
-  src.connect(node);node.connect(ctx.destination);running=true;$('#state').textContent='listening';$('#go').textContent='Stop';$('#go').disabled=false;
+async function voice(id){
+  while(id===session){
+    try{
+      const r=await fetch('/voice',{method:'POST',body:''}), b=await r.arrayBuffer();
+      if(id===session&&b.byteLength&&+r.headers.get('X-Turn')>=mute)play(new Float32Array(b));
+    }catch(e){return}
+  }
 }
-function stop(){running=false;node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();hush();out&&out.close();$('#state').textContent='stopped';$('#go').textContent='Start'}
-$('#go').onclick=()=>running?stop():start().catch(e=>{add('w','Could not start: '+e.message);$('#state').textContent='stopped';$('#go').disabled=false});
+const TAP=`class Tap extends AudioWorkletProcessor{process(i){const x=i[0][0];if(x)this.port.postMessage(x.slice(0));return true}}
+registerProcessor('tap',Tap)`;
+async function start(){
+  $('#go').disabled=true;$('#state').textContent='starting';phones=$('#phones').checked;$('#phones').disabled=true;
+  const r=await fetch('/reset',{method:'POST',body:''});if(!r.ok)throw new Error('server error '+r.status);
+  log.textContent='';queue=[];line=null;cards={};frames=[];fill=0;talking=false;voiced=quiet=gate=0;turn=mute=0;endAt=0;cutting=false;heard=[];last=0;
+  out=new AudioContext({sampleRate:24000});await out.resume();at=0;
+  stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:!phones,noiseSuppression:!phones,autoGainControl:true}});
+  ctx=new AudioContext({sampleRate:16000});await ctx.resume();
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([TAP],{type:'text/javascript'})));
+  const src=ctx.createMediaStreamSource(stream);node=new AudioWorkletNode(ctx,'tap');node.port.onmessage=e=>take(e.data);src.connect(node);
+  running=true;voice(++session);$('#state').textContent='listening';$('#go').textContent='Stop';$('#go').disabled=false;$('#heard').disabled=false;
+}
+function stop(){session++;running=false;node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();hush();out&&out.close();$('#state').textContent='stopped';$('#go').textContent='Start';$('#phones').disabled=false}
+$('#go').onclick=()=>running?stop():start().catch(e=>{add('w','Could not start: '+e.message);$('#state').textContent='stopped';$('#go').disabled=false;$('#phones').disabled=false});
+$('#heard').onclick=()=>{
+  const c=new AudioContext({sampleRate:16000}),all=new Float32Array(heard.length*16000);heard.forEach((p,i)=>all.set(p,i*16000));
+  const b=c.createBuffer(1,all.length||1,16000);b.copyToChannel(all,0);const s=c.createBufferSource();s.buffer=b;s.connect(c.destination);s.onended=()=>c.close();s.start();
+};
 </script></body></html>
