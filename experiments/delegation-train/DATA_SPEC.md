@@ -291,3 +291,15 @@ dev 68; test 139) and 420 unfinished (train 300, dev 40, test 80). Ask is well u
 Spoken, the short requests have a median of 2.7 s, and 188 run past 3.5 s (longest 5.9 s). `make_short_review.py` draws
 your review sample: 30 per target and 40 unfinished, with the same bar as section 2 D (95% right target, 90% fully
 correct). Fine-tuning starts only after that review and your go-ahead.
+
+### Review result
+
+You asked Claude to do this review. Of the 160 samples, 156 had the right target (97.5%) and 153 were fully correct (95.6%), so
+the set passes the bar. Handoff alone had 26 of 30 right: a short request often leaves out something only the person
+knows, and a handoff then makes the backend guess ("Reserve a double room at the Hilton" has no dates). A Claude agent
+then checked all 316 short handoffs for that one fault and rejected 54, including the 4 this review found. The other 3
+failures were an uppercase code, an ask question that followed the tool, and one stilted request.
+
+`duplex_short/delegation_short.jsonl` now holds 1,618 samples, and `seqs/seq_index.jsonl` matches it: 1,206 short (train
+call 316, handoff 223, ask 83, chat 393; dev 64; test 127) and 412 unfinished (train 295, dev 39, test 78). Calls for a
+stable fact stay as calls when a listed tool answers them directly, as in v4. Training has not started.
