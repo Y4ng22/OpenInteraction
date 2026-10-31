@@ -303,3 +303,9 @@ failures were an uppercase code, an ask question that followed the tool, and one
 `duplex_short/delegation_short.jsonl` now holds 1,618 samples, and `seqs/seq_index.jsonl` matches it: 1,206 short (train
 call 316, handoff 223, ask 83, chat 393; dev 64; test 127) and 412 unfinished (train 295, dev 39, test 78). Calls for a
 stable fact stay as calls when a listed tool answers them directly, as in v4. Training has not started.
+
+Of the 54 rejected handoffs, 52 were rewritten as asks with the same request audio; the other 2 stayed out (an ambulance request must not wait for a question, and a clay pot needs a physical test). A Claude agent reviewed them and
+kept 50, which brings train ask to 122 by sequence count (with the unfinished samples) and teaches the line between asking and handing off.
+The final set holds 1,668 samples. Fine-tuning started on 2026-10-31 from `runs/lc_1` with your go-ahead: every new train
+sequence plus 15% of the old ones (3,845 rows), one epoch, learning rate 5e-5, output `runs/ft_short`.
+

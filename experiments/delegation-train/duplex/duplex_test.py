@@ -108,6 +108,15 @@ def result_text(x):
     return "".join(out)
 
 
+def prepare(duplex, system):
+    """duplex.prepare, feeding the system prompt at once: token by token it takes about 30 s per sample."""
+    feed, held = duplex.decoder.feed, []
+    duplex.decoder.feed = lambda embeds, return_logits=False: held.append(embeds)
+    duplex.prepare(prefix_system_prompt=system)
+    duplex.decoder.feed = feed
+    feed(torch.cat(held))
+
+
 def replay_context(duplex, x, wavs, tok, script):
     """Stream the turns before the scored one exactly as in training: the user's earlier line with the model
     listening, then the earlier assistant line, one unit a second at the same pace. Returns the wav of the turn
@@ -263,7 +272,7 @@ def main():
         x = gold[m["id"]]
         fast = {tools[i]["name"] for i in x["frontend_tools"] if i in tools}
         torch.manual_seed(0)
-        duplex.prepare(prefix_system_prompt=system_prompt(x, tools))
+        prepare(duplex, system_prompt(x, tools))
         wav = replay_context(duplex, x, m["wavs"], tok, script)
         speech, _ = sf.read(wav["path"], dtype="float32")
         n_speech = int(np.ceil(len(speech) / SR))

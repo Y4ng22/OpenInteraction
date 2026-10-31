@@ -8,7 +8,8 @@ under `llm.`, so it can be merged into the full model for the duplex test (merge
 
 The full run mixes the delegation sequences (with their two-request pairs) and the kept self-distillation
 conversations (self_distill.py, filter_selfdistill.py). --fraction trains on the same stratified share of every target,
-self-distillation included, for the learning curve. Sequences are read from disk at each step, not held in memory.
+self-distillation included, for the learning curve; --keep-all exempts one directory from it. --init fine-tunes an
+existing adapter. Sequences are read from disk at each step, not held in memory.
 Eval loss is on a stratified sample of --eval-split, reported per target.
 
     python train_lora.py --llm /local/data/xy2764/models/minicpmo45-llm --seqs seqs --out lora_smoke
@@ -24,7 +25,7 @@ import time
 from pathlib import Path
 
 import torch
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, PeftModel, get_peft_model, prepare_model_for_kbit_training
 from transformers import AutoModelForCausalLM, BitsAndBytesConfig, get_cosine_schedule_with_warmup
 
 
@@ -99,6 +100,8 @@ def main():
     ap.add_argument("--selfdistill", type=Path, help="self_distill.py sequences, mixed into train")
     ap.add_argument("--sd-keep", type=Path, help="filter_selfdistill.py output; only kept conversations are used")
     ap.add_argument("--fraction", type=float, default=1.0, help="stratified share of the train rows (learning curve)")
+    ap.add_argument("--keep-all", type=Path, help="with --fraction: use every row of this --seqs directory")
+    ap.add_argument("--init", type=Path, help="fine-tune this adapter instead of starting a new one")
     ap.add_argument("--oversample", nargs="*", default=[], help="target=N: use that target's train rows N times (split=2)")
     ap.add_argument("--eval-split", default="test")
     ap.add_argument("--eval-n", type=int, default=0, help="stratified sample of the eval split (0: all of it)")
@@ -118,7 +121,9 @@ def main():
     rows = load_rows(args)
     train = [r for r in rows if r["split"] == "train"]
     if args.fraction < 1:
-        train = stratified(train, args.fraction, random.Random(args.seed))
+        old = [r for r in train if r["path"].parent != args.keep_all]
+        new = [r for r in train if r["path"].parent == args.keep_all]
+        train = stratified(old, args.fraction, random.Random(args.seed)) + new
     for spec in args.oversample:
         target, times = spec.split("=")
         train += [r for r in train if r["target"] == target] * (int(times) - 1)
@@ -141,8 +146,11 @@ def main():
             quantization_config=BitsAndBytesConfig(load_in_4bit=True, bnb_4bit_quant_type="nf4",
                                                    bnb_4bit_compute_dtype=torch.bfloat16, bnb_4bit_use_double_quant=True))
         model = prepare_model_for_kbit_training(model, use_gradient_checkpointing=True)
-    model = get_peft_model(model, LoraConfig(r=args.rank, lora_alpha=2 * args.rank, lora_dropout=0.05, task_type="CAUSAL_LM",
-                                             target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]))
+    if args.init:
+        model = PeftModel.from_pretrained(model, args.init, is_trainable=True)
+    else:
+        model = get_peft_model(model, LoraConfig(r=args.rank, lora_alpha=2 * args.rank, lora_dropout=0.05, task_type="CAUSAL_LM",
+                                                 target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]))
     model.print_trainable_parameters()
 
     steps = math.ceil(len(train) * args.epochs / args.accum)
