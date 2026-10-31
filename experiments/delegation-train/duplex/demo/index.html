@@ -41,7 +41,9 @@ async function pump(){
   busy=false;pump();
 }
 async function start(){
-  await fetch('/reset',{method:'POST',body:''});log.textContent='';queue=[];buf=[];line=null;
+  $('#go').disabled=true;$('#state').textContent='getting ready, up to 30 seconds';
+  const r=await fetch('/reset',{method:'POST',body:''});if(!r.ok)throw new Error('server error '+r.status);
+  log.textContent='';queue=[];buf=[];line=null;
   out=new AudioContext({sampleRate:24000});await out.resume();at=0;
   stream=await navigator.mediaDevices.getUserMedia({audio:{channelCount:1,echoCancellation:true,noiseSuppression:true}});
   ctx=new AudioContext({sampleRate:16000});const src=ctx.createMediaStreamSource(stream);
@@ -49,8 +51,8 @@ async function start(){
   node.onaudioprocess=e=>{const x=e.inputBuffer.getChannelData(0);buf.push(new Float32Array(x));n+=x.length;
     if(n>=16000){const all=new Float32Array(n);let i=0;buf.forEach(b=>{all.set(b,i);i+=b.length});
       queue.push(all.slice(0,16000));const rest=all.slice(16000);buf=[rest];n=rest.length;pump()}};
-  src.connect(node);node.connect(ctx.destination);running=true;$('#state').textContent='listening';$('#go').textContent='Stop';
+  src.connect(node);node.connect(ctx.destination);running=true;$('#state').textContent='listening';$('#go').textContent='Stop';$('#go').disabled=false;
 }
-function stop(){running=false;node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();hush();out&&out.close();$('#state').textContent='stopped';$('#go').textContent='Start'}
-$('#go').onclick=()=>running?stop():start().catch(e=>add('w','Could not start: '+e.message));
+function stop(){running=false;fetch('/reset',{method:'POST',body:''});node&&node.disconnect();stream&&stream.getTracks().forEach(t=>t.stop());ctx&&ctx.close();hush();out&&out.close();$('#state').textContent='stopped';$('#go').textContent='Start'}
+$('#go').onclick=()=>running?stop():start().catch(e=>{add('w','Could not start: '+e.message);$('#state').textContent='stopped';$('#go').disabled=false});
 </script></body></html>

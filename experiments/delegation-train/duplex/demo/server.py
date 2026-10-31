@@ -37,12 +37,20 @@ BACKEND_DELAY = 6  # units
 class Session:
     def __init__(self, duplex, tok, system, voice):
         self.duplex, self.tok, self.system, self.voice = duplex, tok, system, voice
-        self.lock = threading.Lock()
+        self.lock, self.cache, self.fresh = threading.Lock(), None, False
         self.reset()
 
     def reset(self):
-        self.duplex.prepare(prefix_system_prompt=self.system, prompt_wav_path=self.voice)
-        self.in_call, self.call, self.calls, self.queue, self.t = False, "", [], [], 0
+        with self.lock:  # a second Start while the first is still preparing would corrupt the decoder
+            if self.fresh:  # streaming the system prompt in takes 30 s, so it is done ahead of Start
+                return
+            d, cache = self.duplex, self.cache
+            d.prepare(prefix_system_prompt=self.system, prompt_wav_path=None if cache else self.voice)
+            if cache:
+                d.flow_cache_base, d.hift_cache_base, d.token2wav_initialized = *cache, True
+                d._reset_token2wav_for_new_turn()
+            self.cache = d.flow_cache_base, d.hift_cache_base
+            self.in_call, self.call, self.calls, self.queue, self.t, self.fresh = False, "", [], [], 0, True
 
     def out(self):
         """Text since the last call, split into what is spoken and the finished tool calls."""
@@ -85,7 +93,7 @@ class Session:
 
     def unit(self, pcm):
         with self.lock:
-            t0, parts, delivered = time.time(), [], []
+            t0, parts, delivered, self.fresh = time.time(), [], [], False
             for item in [q for q in self.queue if q[0] <= self.t]:
                 self.queue.remove(item)
                 text = "<tool_response>" + json.dumps(item[1], ensure_ascii=False) + "</tool_response>"
