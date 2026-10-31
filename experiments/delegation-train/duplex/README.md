@@ -175,3 +175,28 @@ After the reply and one silent second, the result goes into the stream as `<tool
   "Here are some interview questions to practice:", and one hands off again.
 - A 4-bit QLoRA run on one card reached a similar training loss but ran out of memory in its final evaluation
   before saving (fixed: the adapter is now saved first); it was not tested.
+
+## Fine-tuning on short requests (2026-10-31)
+
+`runs/ft_short` continues from `runs/lc_1` on the data of `DATA_SPEC.md` section 7: every new train sequence plus 15% of the
+old ones (3,845 rows), one epoch, lr 5e-5, about 2 hours on two cards. The test now feeds the system prompt at once, which can
+shift results slightly against the earlier runs.
+
+| Measure | 100% model | Fine-tuned |
+|---|---|---|
+| Short test, right | 66/138 | 120/138 |
+| Short test, never answered | 55/138 | 1/138 |
+| Short test by target (call, handoff, ask, chat) | 23/36, 1/24, 14/38, 28/40 | 36/36, 14/24, 37/38, 33/40 |
+| Unfinished speech, kept listening | 78/78 | 73/78 |
+| Unfinished speech, right target | 66/78 | 71/78 |
+| Fixed test, right | 623/695 | 620/695 |
+| Fixed test by target (call, handoff, ask, split, chat) | 210, 163, 105, 56, 89 | 212, 174, 91, 56, 87 |
+| Exact calls | 197/266 | 198/268 |
+| Spoke before the user finished | 44 | 64 |
+| Told the user after a result | 101/101 | 101/101 |
+| Behavior check, passed | 280/300 | 277/300 |
+| Kept speaking 3 s into a cut-in | 19/104 | 22/104 (untrained 14/104) |
+| Dev loss | 0.394 | 0.401 |
+
+Short requests are fixed. The cost is a model that speaks sooner: more replies before the user has finished, fewer asks on the
+fixed test, and slightly more cut-in overruns.
