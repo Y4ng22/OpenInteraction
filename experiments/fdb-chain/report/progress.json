@@ -1,5 +1,5 @@
 {
-  "updated": "2026-10-30T14:45:00Z",
+  "updated": "2026-10-31T14:00:00Z",
   "steps": [
     {
       "id": "s01",
@@ -125,13 +125,13 @@
     },
     {
       "id": "s13",
-      "note": "Running since 10:35 on GPUs 3-6 (two pairs): one epoch at 12.5%, 25%, 50% and 100% of the mix, LoRA r16, bf16, lr 2e-4, about 8 s per step. The first start ran out of memory on the longest sequences; loss is now computed only on the model's own tokens. Curves are in the Delegation training tab.",
+      "note": "All four runs done. Dev loss 1.57 untrained, 0.460 at 12.5%, 0.431 at 25%, 0.414 at 50%, 0.399 at 100%.",
       "order": 14,
       "phase": "Train",
-      "status": "running",
+      "status": "done",
       "title": "LoRA SFT of MiniCPM-o",
-      "updated": "2026-10-30T14:45:00Z",
-      "pct": 2
+      "updated": "2026-10-31T14:00:00Z",
+      "pct": 100
     },
     {
       "id": "s14",

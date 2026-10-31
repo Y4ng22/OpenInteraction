@@ -103,6 +103,17 @@ Base model in duplex on the fourth-round test set (`eval_v4/base/`, same system 
 - Duplex behavior on the 300 held-out conversations: 280 pass the filter (93.3%). 14 of 104 cut-ins kept speaking 3 s
   in (13.5%), 4 never spoke, 2 said Qwen or Alibaba. These are the numbers a trained adapter must not get worse on.
 
+100% adapter on the fixed test (`eval_v4/lc_1/`): target right 623/695 (89.6%): call 210/223, handoff 163/193, ask
+105/119, split 56/69, chat 89/91. Exact calls 197/266, handoff or split with an acknowledgment 238/239, spoke early on
+44, told the user after a result 101/101, with a value 95/101, no call JSON spoken. Behavior 280/300 pass; 19 of 104
+cut-ins kept speaking 3 s in (14 untrained), 1 never spoke, none said Qwen.
+
+Of the 69 inexact calls, 49 have the right tool and keys with a different value (misheard words, cups/cup), 13 a wrong,
+missing or repeated tool, 7 a dropped or merged argument.
+
+Untrained on the fixed test: 111/695, but silent on 202 of the 219 context samples, which is unexplained. On the 476
+single-turn samples: untrained 108 right (23%), 100% adapter 424 (89%).
+
 ## Pipeline
 
 | Step | File | Output (server, `/local/data/xy2764/delegation-train/duplex/`) |
