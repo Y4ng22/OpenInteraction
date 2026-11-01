@@ -286,10 +286,11 @@ def main():
     ap.add_argument("--allow", type=Path, required=True)
     ap.add_argument("--port", type=int, default=8765)
     ap.add_argument("--no-nudge", dest="nudge", action="store_false", help="let the model stay silent after short requests")
+    ap.add_argument("--one-card", action="store_true", help="keep everything on one card with room for it, such as an A100")
     args = ap.parse_args()
+    place = {"device_map": {"": 0}} if args.one_card else {"device_map": "auto", "max_memory": {0: "2GiB", 1: "14GiB", 2: "14GiB"}}
     model = AutoModel.from_pretrained(args.src, trust_remote_code=True, attn_implementation="sdpa", torch_dtype=torch.bfloat16,
-                                      init_vision=False, init_audio=True, init_tts=True, device_map="auto",
-                                      max_memory={0: "2GiB", 1: "14GiB", 2: "14GiB"}).eval()  # the voice decoder takes card 0
+                                      init_vision=False, init_audio=True, init_tts=True, **place).eval()  # the voice decoder takes card 0
     merge_lora(model.llm, args.lora)
     remove_hook_from_module(model.tts, recurse=True)  # the speech thread gets a card of its own, shared with the voice decoder
     model.tts.to(0)
