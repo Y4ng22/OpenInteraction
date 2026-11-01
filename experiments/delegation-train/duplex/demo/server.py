@@ -35,6 +35,20 @@ FRONTEND = ["hourlyWeatherSnapshot", "make_todo_list", "getChildVaccinationStatu
 BACKEND_DELAY = 6  # units
 MAX_SKIP = 8  # units run ahead of the clock in one request
 SR = 16000
+PITCH_FRAME = 640  # 40 ms
+MIN_PITCHED = .24  # seconds a unit needs to count as speech; speech has .5 or more, noise and coughs under .2
+
+
+def pitched(pcm):
+    """Seconds of the unit with a voice's pitch, 80 to 400 Hz. Noise is as loud as speech but has none."""
+    frames = 0
+    for i in range(0, len(pcm) - PITCH_FRAME + 1, PITCH_FRAME):
+        x = pcm[i:i + PITCH_FRAME] - pcm[i:i + PITCH_FRAME].mean()
+        if np.sqrt((x ** 2).mean()) < .02:
+            continue
+        r = np.fft.irfft(np.abs(np.fft.rfft(x, 2 * PITCH_FRAME)) ** 2)
+        frames += r[SR // 400:SR // 80].max() > .5 * r[0]
+    return frames * PITCH_FRAME / SR
 
 
 def number(args, *names):
@@ -224,7 +238,7 @@ class Session:
                 self.cut_in()
             self.deliver(parts, events)
             self.quiet = 0 if pcm.any() else self.quiet + 1
-            voiced = not playing and (np.abs(pcm) > .02).sum() > SR / 4  # not a cough, not its own voice from the speakers
+            voiced = not playing and pitched(pcm) > MIN_PITCHED  # not a cough, not its own voice from the speakers
             self.heard = (self.heard or voiced) and self.quiet < 3
             # Training had almost no requests under three seconds, and after them the model keeps listening for good.
             # Once the user has been quiet for two units it has to answer.
